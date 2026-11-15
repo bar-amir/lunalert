@@ -30,6 +30,18 @@ final class SettingsWindowController {
         StatusItemController.shared.keepPanelOpen(true)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+        stayAbovePanel()
+    }
+
+    /// Settings always sits above the panel: one level up while the panel is open, a normal window otherwise
+    /// (so it never floats over other apps).
+    func stayAbovePanel() {
+        guard let window else { return }
+        if let panel = StatusItemController.shared.openPanelLevel {
+            window.level = NSWindow.Level(rawValue: panel.rawValue + 1)
+        } else {
+            window.level = .normal
+        }
     }
 }
 

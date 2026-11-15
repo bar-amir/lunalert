@@ -59,6 +59,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        SettingsWindowController.shared.stayAbovePanel()
+    }
+
+    /// The panel's window level while it's open (pop-ups sit above normal windows); nil when closed.
+    var openPanelLevel: NSWindow.Level? {
+        guard popover.isShown, let window = popover.contentViewController?.view.window else { return nil }
+        return window.level
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        SettingsWindowController.shared.stayAbovePanel()
     }
 
     func closePanel() {
