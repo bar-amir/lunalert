@@ -183,8 +183,26 @@ struct SettingsView: View {
             SettingsRow("Stargaze (alerts off)", detail: "No banners while it's on. Leave it from the sky or the menu-bar item's right-click menu.") {
                 Toggle("", isOn: $stargaze.stargazing).labelsHidden().toggleStyle(.switch)
             }
-            SettingsRow("Play a sound") {
-                Toggle("", isOn: $store.soundEnabled).labelsHidden().toggleStyle(.switch)
+            SettingsRow("Sound", detail: "Plays with each banner.") {
+                HStack(spacing: 8) {
+                    Picker("", selection: $store.bannerSound) {
+                        Section("Lunalert") {
+                            ForEach(BannerSound.lunalert) { Text($0.label).tag($0) }
+                        }
+                        Section("System") {
+                            ForEach(BannerSound.system) { Text($0.label).tag($0) }
+                        }
+                        Divider()
+                        Text(BannerSound.none.label).tag(BannerSound.none)
+                    }
+                    .labelsHidden().fixedSize()
+                    .onChange(of: store.bannerSound) { _, sound in sound.preview() }
+                    Button { store.bannerSound.preview() } label: { Image(systemName: "play.fill") }
+                        .buttonStyle(IconButtonStyle(size: 26, quiet: true))
+                        .disabled(store.bannerSound == .none)
+                        .opacity(store.bannerSound == .none ? 0.4 : 1)
+                        .tooltip("Play")
+                }
             }
             SettingsRow("Try it") {
                 Button("Send Test Banner") { store.sendTestBanner() }.buttonStyle(SecondaryButtonStyle())

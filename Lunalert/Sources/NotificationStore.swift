@@ -53,7 +53,7 @@ final class NotificationStore: ObservableObject {
     @AppStorage("selectedTab") var selectedTab: ThreadTab = .all
     @AppStorage("prSubTab") var prSubTab: PRSubTab = .all
     @AppStorage("pollIntervalSeconds") var pollIntervalSeconds: Double = 60
-    @AppStorage("soundEnabled") var soundEnabled = true
+    @AppStorage(BannerSound.defaultsKey) var bannerSound: BannerSound = .default
     @AppStorage("ciFilter") var ciFilter: CIFilter = .all
     @AppStorage("groupCI") var groupCI = true
     @AppStorage("doneOnOpen") var doneOnOpen = false
@@ -71,6 +71,7 @@ final class NotificationStore: ObservableObject {
     private var seen: SeenStore
 
     private init() {
+        BannerSound.migrateLegacyToggle()
         seen = SeenStore.load()
     }
 
@@ -313,7 +314,7 @@ final class NotificationStore: ObservableObject {
         content.body = requesters[pr.id].map { "@\($0) asked for your review" } ?? "Waiting for your review"
         content.threadIdentifier = pr.repoFullName
         content.userInfo = [AppDelegate.urlKey: pr.htmlURL]
-        if soundEnabled { content.sound = .default }
+        content.sound = bannerSound.notificationSound
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "review-\(pr.id)", content: content, trigger: nil))
     }
@@ -355,7 +356,7 @@ final class NotificationStore: ObservableObject {
         content.body = detail.summary ?? Self.typeLabel(thread.subject.type)
         content.threadIdentifier = thread.repository.fullName
         content.userInfo = [AppDelegate.urlKey: detail.url.absoluteString, AppDelegate.threadKey: thread.id]
-        if soundEnabled { content.sound = .default }
+        content.sound = bannerSound.notificationSound
         let request = UNNotificationRequest(identifier: "thread-\(thread.id)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
@@ -366,7 +367,7 @@ final class NotificationStore: ObservableObject {
         content.title = "\(count) more GitHub notifications"
         content.body = "Open the Lunalert menu to see them all."
         content.userInfo = [AppDelegate.urlKey: "https://github.com/notifications"]
-        if soundEnabled { content.sound = .default }
+        content.sound = bannerSound.notificationSound
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "summary-\(UUID().uuidString)", content: content, trigger: nil))
     }
@@ -395,7 +396,7 @@ final class NotificationStore: ObservableObject {
         content.subtitle = "Test notification"
         content.body = "Banners for new GitHub notifications will look like this."
         content.userInfo = [AppDelegate.urlKey: "https://github.com/notifications"]
-        if soundEnabled { content.sound = .default }
+        content.sound = bannerSound.notificationSound
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "test-\(UUID().uuidString)", content: content, trigger: nil))
     }
