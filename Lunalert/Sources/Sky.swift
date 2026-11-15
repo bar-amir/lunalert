@@ -475,9 +475,8 @@ final class SkyLayerView: NSView {
     private var builtTwinkleKey: String?
     private var shownHighlight: String?
     private var observers: [NSObjectProtocol] = []
-    private var parallaxSubscription: Any?
     private var link: CADisplayLink?
-    private var quietTicks = 0
+    private var lastPosition: CGPoint?
 
     init(role: SkyRole) {
         self.role = role
@@ -501,12 +500,6 @@ final class SkyLayerView: NSView {
         highlightLines.lineCap = .round
         highlightDots.fillColor = NSColor.white.cgColor
         layer?.addSublayer(container)
-        if role == .panel {
-            parallaxSubscription = Parallax.shared.$offset.sink { [weak self] offset in
-                self?.parallax = offset
-                self?.reposition(animated: true)
-            }
-        }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -604,15 +597,13 @@ final class SkyLayerView: NSView {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
         guard let window else { stopFollowing(); return }
-        let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: NSWindow.willMoveNotification, object: window, queue: .main) { [weak self] _ in
-            self?.startFollowing()
-        })
+        // Synchronous (queue nil): when a window moves itself, the sky moves in the same commit.
         for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didChangeScreenNotification] {
-            observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                self?.reposition(animated: false)
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reposition(animated: false) }
             })
         }
+        startFollowing()
         reposition(animated: false)
     }
 
@@ -621,9 +612,8 @@ final class SkyLayerView: NSView {
         reposition(animated: false)
     }
 
-    /// While the window is dragged, follow it on every display refresh.
+    /// Every display frame while the window is on screen: follow the window and the pointer's parallax.
     private func startFollowing() {
-        quietTicks = 0
         guard link == nil else { return }
         let link = displayLink(target: self, selector: #selector(tick))
         link.add(to: .main, forMode: .common)
@@ -635,10 +625,11 @@ final class SkyLayerView: NSView {
         link = nil
     }
 
-    @objc private func tick() {
+    @objc private func tick(_ link: CADisplayLink) {
+        guard let window, window.occlusionState.contains(.visible) else { return }
+        Parallax.shared.step(now: link.timestamp)
+        parallax = Parallax.shared.offset
         reposition(animated: false)
-        quietTicks = NSEvent.pressedMouseButtons == 0 ? quietTicks + 1 : 0
-        if quietTicks > 20 { stopFollowing() }
     }
 
     private func reposition(animated: Bool) {
@@ -647,15 +638,12 @@ final class SkyLayerView: NSView {
         let rect = window.convertToScreen(convert(bounds, to: nil))
         origin = CGPoint(x: rect.minX - screenFrame.minX, y: screenFrame.maxY - rect.maxY)
         if role == .panel { MainActor.assumeIsolated { SkyModel.shared.panelOrigin = origin } }
+        let position = CGPoint(x: -origin.x + parallax.width, y: bounds.height - screen.height + origin.y - parallax.height)
+        guard position != lastPosition else { return }
+        lastPosition = position
         CATransaction.begin()
-        if animated {
-            CATransaction.setAnimationDuration(0.45)
-            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        } else {
-            CATransaction.setDisableActions(true)
-        }
-        container.position = CGPoint(x: -origin.x + parallax.width,
-                                     y: bounds.height - screen.height + origin.y - parallax.height)
+        CATransaction.setDisableActions(true)
+        container.position = position
         CATransaction.commit()
     }
 
@@ -885,27 +873,36 @@ struct StargazeOverlay: View {
 
 // MARK: - Parallax
 
-/// The sky drifts a few points against the pointer, as if seen through a window. Kept apart from SkyModel
-/// so pointer movement never redraws the stars, only moves them.
+/// The sky drifts a few points against the pointer, as if seen through a window. It follows the pointer
+/// anywhere on screen, and every window reads the same value, so the panel and Settings move together.
 @MainActor
-final class Parallax: ObservableObject {
+final class Parallax {
     static let shared = Parallax()
-    /// How far the sky layer extends past the panel on each side, so drifting never shows an edge.
     static let bleed: CGFloat = 0
     static let reach: CGFloat = 5
 
-    @Published private(set) var offset: CGSize = .zero
+    private(set) var offset: CGSize = .zero
+    private var lastStep: CFTimeInterval = 0
 
-    func track(_ point: CGPoint?, in size: CGSize) {
-        guard let point, size.width > 0, size.height > 0 else { offset = .zero; return }
-        let nx = (point.x / size.width - 0.5) * 2, ny = (point.y / size.height - 0.5) * 2
-        offset = CGSize(width: -nx * Parallax.reach, height: -ny * Parallax.reach * 0.6)
+    /// Advances the smoothed offset toward the pointer; called by each sky layer per display frame,
+    /// but moves only once per frame however many windows ask.
+    func step(now: CFTimeInterval) {
+        guard now - lastStep > 0.004 else { return }
+        lastStep = now
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { offset = .zero; return }
+        let mouse = NSEvent.mouseLocation
+        guard let screen = (NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main)?.frame else { return }
+        let nx = max(-1, min(1, (mouse.x - screen.midX) / (screen.width / 2)))
+        let ny = max(-1, min(1, (mouse.y - screen.midY) / (screen.height / 2)))
+        let target = CGSize(width: -nx * Parallax.reach, height: ny * Parallax.reach * 0.6)
+        offset = CGSize(width: offset.width + (target.width - offset.width) * 0.1,
+                        height: offset.height + (target.height - offset.height) * 0.1)
     }
 
-    /// A point in the panel, in the sky layer's own coordinates.
+    /// A point in the panel, in screen-sky coordinates.
     func skyPoint(fromPanel p: CGPoint) -> CGPoint {
         let origin = SkyModel.shared.panelOrigin
-        return CGPoint(x: p.x + Parallax.bleed - offset.width + origin.x, y: p.y + Parallax.bleed - offset.height + origin.y)
+        return CGPoint(x: p.x - offset.width + origin.x, y: p.y - offset.height + origin.y)
     }
 }
 

@@ -58,12 +58,7 @@ struct MenuContentView: View {
         .background(ParallaxSky().environment(\.skyRole, .panel))
         .clipped()
         .onGeometryChange(for: CGSize.self) { $0.size } action: { panelSize = $0 }
-        .onContinuousHover { phase in
-            switch phase {
-            case let .active(point): Parallax.shared.track(point, in: panelSize)
-            case .ended: Parallax.shared.track(nil, in: panelSize)
-            }
-        }
+
         .environment(\.colorScheme, panelAppearance == .night ? .dark : systemScheme)
         .focusable()
         .focusEffectDisabled()

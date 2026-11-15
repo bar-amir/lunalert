@@ -12,12 +12,12 @@ final class SettingsWindowController {
         if window == nil {
             let host = NSHostingController(rootView: SettingsView().environmentObject(NotificationStore.shared))
             host.sizingOptions = .preferredContentSize
-            let window = NSWindow(contentViewController: host)
+            let window = SkyMaskWindow(contentViewController: host)
             window.title = "Lunalert Settings"
             window.styleMask = [.titled, .closable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
-            window.isMovableByWindowBackground = true
+            window.isMovable = false // SkyMaskWindow drags itself, in step with the sky
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: .darkAqua)
             window.center()
@@ -30,6 +30,31 @@ final class SettingsWindowController {
         StatusItemController.shared.keepPanelOpen(true)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+/// A window that drags itself by its top band. Moving the window and sliding its sky happen in one Core
+/// Animation commit, so the window reads as a mask over a still sky instead of the sky catching up a frame late.
+final class SkyMaskWindow: NSWindow {
+    /// Height of the draggable band at the top (the header), and the close button's corner to leave alone.
+    private let band: CGFloat = 74
+    private let buttonCorner: CGFloat = 64
+
+    override func sendEvent(_ event: NSEvent) {
+        guard event.type == .leftMouseDown, let content = contentView else { return super.sendEvent(event) }
+        let p = event.locationInWindow
+        let inBand = p.y > content.bounds.height - band && p.x > buttonCorner
+        guard inBand else { return super.sendEvent(event) }
+        let startMouse = NSEvent.mouseLocation
+        let startOrigin = frame.origin
+        while let next = nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            let mouse = NSEvent.mouseLocation
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            setFrameOrigin(NSPoint(x: startOrigin.x + mouse.x - startMouse.x, y: startOrigin.y + mouse.y - startMouse.y))
+            CATransaction.commit()
+            CATransaction.flush()
+        }
     }
 }
 
