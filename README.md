@@ -17,6 +17,7 @@ when Reduce Motion is on.
 
 - **Banners that say what happened.** "@sam approved: looks good", "@kim commented: …", "Merged by @lee",
   "✗ 3 of 3 runs failed · CI, Lint". Clicking a banner opens the exact PR, review or comment.
+- **Night-sky sounds.** Banners chime with one of Lunalert's own sounds (Starlight, Pulsar, Comet, Orbit, Nebula, Moonrise), a macOS alert sound, or none.
 - **An inbox in the menu bar**, grouped by repository, with tabs for All, PRs, Issues and CI. PRs have
   sub-tabs: Review (every open PR waiting on you, from `review-requested:@me`), Comments, Approved, Changes
   and Merged/Closed.
@@ -120,6 +121,7 @@ Lunalert/Sources/
   SettingsView.swift        token, interval, sound, launch at login
   Keychain.swift            token storage
 scripts/make-icon.swift     draws the app icon into the asset catalog
+scripts/make-sounds.py      synthesizes the banner sounds into Lunalert/Resources/Sounds
 ```
 
 ## License
