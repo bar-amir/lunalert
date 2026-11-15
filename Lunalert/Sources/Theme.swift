@@ -154,15 +154,9 @@ extension View {
 
 /// The panel's backdrop: the real sky over you right now (see Sky.swift), on a deep night gradient.
 struct SpaceBackground: View {
-    @ObservedObject private var sky = SkyModel.shared
-
     var body: some View {
         ZStack {
             Theme.canvas
-            // The glow toward the bottom steps back in Stargaze, leaving more sky.
-            LinearGradient(colors: [Theme.canvas, Theme.skyGlowA.opacity(0.5)], startPoint: .top, endPoint: .bottom)
-                .opacity(sky.stargazing ? 0 : 1)
-                .animation(.easeInOut(duration: 0.6), value: sky.stargazing)
             RealSky()
         }
         .accessibilityHidden(true)
@@ -365,7 +359,7 @@ struct Identicon: View {
 /// A small glass tooltip that appears after a short hover. `.below` for header buttons, `.left` for row
 /// actions (which sit inside clipped cards).
 struct GlassTooltip: ViewModifier {
-    enum Placement { case below, left }
+    enum Placement { case below, above }
     let text: String
     var placement: Placement = .below
     @State private var hovering = false
@@ -384,14 +378,14 @@ struct GlassTooltip: ViewModifier {
                     withAnimation(.easeOut(duration: 0.12)) { shown = false }
                 }
             }
-            .overlay(alignment: .bottomTrailing) {
+            .overlay(alignment: .bottom) {
                 if shown && placement == .below {
                     bubble.alignmentGuide(.bottom) { d in d[.top] - 6 }
                 }
             }
-            .overlay(alignment: .leading) {
-                if shown && placement == .left {
-                    bubble.alignmentGuide(.leading) { d in d[.trailing] + 6 }
+            .overlay(alignment: .top) {
+                if shown && placement == .above {
+                    bubble.alignmentGuide(.top) { d in d[.bottom] + 6 }
                 }
             }
     }

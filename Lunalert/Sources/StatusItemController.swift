@@ -65,6 +65,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.performClose(nil)
     }
 
+    /// While Settings is open the panel stays up beside it, so changes show as they're made.
+    func keepPanelOpen(_ keep: Bool) {
+        popover.behavior = keep ? .applicationDefined : .transient
+    }
+
     private func showMenu() {
         let menu = NSMenu()
         menu.addItem(ClosureMenuItem(title: "Open Lunalert") { [weak self] in self?.openPanel() })

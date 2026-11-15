@@ -53,7 +53,7 @@ struct MenuContentView: View {
         .overlay {
             if sky.stargazing { StargazeOverlay().transition(.opacity) }
         }
-        .background(ParallaxSky())
+        .background(ParallaxSky().environment(\.skyRole, .panel))
         .clipped()
         .onGeometryChange(for: CGSize.self) { $0.size } action: { panelSize = $0 }
         .onContinuousHover { phase in
@@ -126,7 +126,7 @@ struct MenuContentView: View {
                                    value: store.isRefreshing)
                 }
                 .buttonStyle(IconButtonStyle())
-                .tooltip("Check GitHub now · ⌘R")
+                .tooltip("Refresh · ⌘R")
                 .accessibilityLabel(store.isRefreshing ? "Checking GitHub" : "Check GitHub now")
             }
             moreMenu
@@ -164,7 +164,7 @@ struct MenuContentView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .tooltip("Settings and more")
+        .tooltip("More")
         .accessibilityLabel("More")
     }
 
@@ -454,7 +454,7 @@ struct MenuContentView: View {
     }
 
     private func showSettings() {
-        StatusItemController.shared.closePanel()
+        // The panel stays open beside Settings, so changes show in it as they're made.
         SettingsWindowController.shared.show()
     }
 }
@@ -741,6 +741,7 @@ struct RepoBox: View {
     let items: [InboxItem]
     var demo: [String: (exit: (ExitKind, Double)?, open: Double?)] = [:]
     @State private var hovering = false
+    @State private var hoveredRow: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -755,15 +756,19 @@ struct RepoBox: View {
                     Image(systemName: "checkmark")
                 }
                 .buttonStyle(IconButtonStyle(size: 28, tint: hovering ? Theme.text : Theme.secondaryText))
-                .tooltip("Mark all in \(repo) done", .left)
+                .tooltip("All done")
                 .accessibilityLabel("Mark everything in \(repo) done")
             }
             .padding(.horizontal, Spacing.cardInset)
             .frame(height: 40)
+            .zIndex(2)
             Rectangle().fill(Theme.hairline).frame(height: 1)
             ForEach(items) { item in
                 ItemRow(item: item, selected: store.selection == item.id,
-                        demoExit: demo[item.id]?.exit ?? nil, demoOpen: demo[item.id]?.open ?? nil)
+                        demoExit: demo[item.id]?.exit ?? nil, demoOpen: demo[item.id]?.open ?? nil,
+                        lastInCard: item.id == items.last?.id)
+                    .onHover { if $0 { hoveredRow = item.id } }
+                    .zIndex(hoveredRow == item.id ? 1 : 0)
                     .transition(.asymmetric(
                         insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)).combined(with: .offset(y: -8)),
                         removal: .opacity))
@@ -792,6 +797,8 @@ struct ItemRow: View {
     let selected: Bool
     var demoExit: (ExitKind, Double)?
     var demoOpen: Double?
+    /// The last row in its card shows tooltips above, where the card's edge won't cut them.
+    var lastInCard = false
     @State private var hovering = false
     @State private var exitPhase: Double = 0
     @State private var openPhase: Double = 0
@@ -933,7 +940,7 @@ struct ItemRow: View {
                         Image(systemName: "bell.slash")
                     }
                     .buttonStyle(IconButtonStyle(size: 28))
-                    .tooltip("Mute thread · M", .left)
+                    .tooltip("Mute · M", lastInCard ? .above : .below)
                     .accessibilityLabel("Mute")
                     .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .trailing)))
                 }
@@ -941,7 +948,7 @@ struct ItemRow: View {
                     Image(systemName: "checkmark")
                 }
                 .buttonStyle(IconButtonStyle(size: 28, tint: active ? Theme.open : Theme.secondaryText, quiet: !active))
-                .tooltip("Mark done · E", .left)
+                .tooltip("Done · E", lastInCard ? .above : .below)
                 .accessibilityLabel("Mark done")
             }
         }
@@ -1076,7 +1083,7 @@ struct EmptyStateView: View {
             }
         }
         .padding(.horizontal, 32)
-        .padding(.vertical, 24)
+        .padding(.vertical, 52)
         .frame(maxWidth: .infinity)
         .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }

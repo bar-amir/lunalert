@@ -5,6 +5,9 @@ import SwiftUI
 /// data with fictional repositories. Used for design review and audits; never touches GitHub.
 @MainActor
 enum Snapshot {
+    /// A typical laptop screen, with the panel hanging from the right of the menu bar.
+    static let screen = CGSize(width: 1512, height: 982)
+    static let panelViewport = SkyViewport(screen: screen, origin: CGPoint(x: 1512 - 480 - 160 - Parallax.bleed, y: 30 - Parallax.bleed))
     /// A fixed evening for reproducible skies: 2026-11-12 20:00 UTC.
     static let skyDate: Date = ProcessInfo.processInfo.environment["LUNALERT_SKY_DATE"]
         .flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date(timeIntervalSince1970: 1_794_513_600)
@@ -24,6 +27,7 @@ enum Snapshot {
                     .environment(\.snapshotMode, true)
                     .environment(\.frozenTime, 12)
                     .environment(\.skyDate, Snapshot.skyDate)
+                    .environment(\.skyViewport, Snapshot.panelViewport)
                 render(view, dark: dark, to: folder.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
             }
         }
@@ -83,10 +87,12 @@ enum Snapshot {
         SkyModel.shared.stargazing = true
         let probe = folder.appendingPathComponent(".probe.png")
         render(MenuContentView().environmentObject(store).environment(\.snapshotMode, true)
-                   .environment(\.frozenTime, 12).environment(\.skyDate, Snapshot.skyDate), dark: true, to: probe)
+                   .environment(\.frozenTime, 12).environment(\.skyDate, Snapshot.skyDate)
+                   .environment(\.skyViewport, Snapshot.panelViewport), dark: true, to: probe)
         try? FileManager.default.removeItem(at: probe)
         if let frame = SkyModel.shared.frame {
-            let center = CGPoint(x: panelWidth / 2, y: 260)
+            let o = Snapshot.panelViewport.origin
+            let center = CGPoint(x: o.x + Parallax.bleed + panelWidth / 2, y: o.y + Parallax.bleed + 260)
             SkyModel.shared.hovered = frame.constellations.min { a, b in
                 let da = a.segments.map { hypot($0.0.x - center.x, $0.0.y - center.y) }.min() ?? .infinity
                 let db = b.segments.map { hypot($0.0.x - center.x, $0.0.y - center.y) }.min() ?? .infinity
@@ -100,15 +106,22 @@ enum Snapshot {
         for dark in [false, true] {
             for tab in SettingsTab.allCases {
                 render(SettingsView(tab: tab).environmentObject(store).environment(\.snapshotMode, true)
-                           .environment(\.skyDate, Snapshot.skyDate).environment(\.frozenTime, 12),
+                           .environment(\.skyDate, Snapshot.skyDate)
+                    .environment(\.skyViewport, Snapshot.panelViewport).environment(\.frozenTime, 12),
                        dark: dark, to: folder.appendingPathComponent("20-settings-\(tab.rawValue)-\(dark ? "dark" : "light").png"))
             }
         }
+        // The whole screen's sky, to check that windows are slices of one sky.
+        render(SpaceBackground().frame(width: Snapshot.screen.width, height: Snapshot.screen.height)
+                   .environment(\.snapshotMode, true).environment(\.frozenTime, 12)
+                   .environment(\.skyDate, Snapshot.skyDate)
+                   .environment(\.skyViewport, SkyViewport(screen: Snapshot.screen, origin: .zero)),
+               dark: true, to: folder.appendingPathComponent("21-sky-whole-screen.png"))
         print("Wrote snapshots to \(folder.path)")
     }
 
     /// Lays the view out in an offscreen window (so AppKit-backed controls draw) and writes a 2x PNG.
-    static func render<V: View>(_ view: V, dark: Bool, to url: URL) {
+    static func render<V: View>(_ view: V, dark: Bool, to url: URL, at screenPoint: CGPoint? = nil) {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let host = NSHostingView(rootView: view)
         host.appearance = appearance
@@ -127,6 +140,12 @@ enum Snapshot {
             size = next
         }
         host.frame = NSRect(origin: .zero, size: size)
+        if let screenPoint {
+            // Place the window like a real one, so views that read their position on screen see it.
+            window.setFrameTopLeftPoint(screenPoint)
+            window.postWindowMoved()
+            for _ in 0..<4 { RunLoop.current.run(until: Date().addingTimeInterval(0.03)) }
+        }
         host.layoutSubtreeIfNeeded()
         host.display()
 
@@ -251,6 +270,7 @@ enum AnimationFrames {
                     .environment(\.snapshotMode, true)
                     .environment(\.frozenTime, 12 + t)
                     .environment(\.skyDate, Snapshot.skyDate)
+                    .environment(\.skyViewport, Snapshot.panelViewport)
                 Snapshot.render(view, dark: true, to: dir.appendingPathComponent(String(format: "%03d.png", i)))
             }
         }
@@ -398,5 +418,42 @@ struct ActionDemo: View {
         .frame(width: panelWidth, height: 430)
         .background(SpaceBackground())
         .environment(\.colorScheme, .dark)
+    }
+}
+
+extension NSWindow {
+    func postWindowMoved() { NotificationCenter.default.post(name: NSWindow.didMoveNotification, object: self) }
+}
+
+/// `Lunalert --viewport-test <folder>`: a real Settings window at a known place on the main screen, measuring
+/// its own position, next to the whole screen's sky; the window's sky should be exactly that part of it.
+@MainActor
+enum ViewportTest {
+    static func run(to folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard let screen = NSScreen.main else { return }
+        let store = NotificationStore.shared
+        Fixtures().applyNormal(store)
+        let topLeft = CGPoint(x: screen.frame.minX + 300, y: screen.frame.maxY - 200)
+        Snapshot.render(SettingsView(tab: .sky).environmentObject(store).environment(\.snapshotMode, true)
+                            .environment(\.skyDate, Snapshot.skyDate).environment(\.frozenTime, 12),
+                        dark: true, to: folder.appendingPathComponent("window.png"), at: topLeft)
+        Snapshot.render(SpaceBackground().frame(width: screen.frame.width, height: screen.frame.height)
+                            .environment(\.snapshotMode, true).environment(\.frozenTime, 12)
+                            .environment(\.skyDate, Snapshot.skyDate)
+                            .environment(\.skyViewport, SkyViewport(screen: screen.frame.size, origin: .zero)),
+                        dark: true, to: folder.appendingPathComponent("screen.png"))
+        print("window top-left on screen: 300, 200; screen \(Int(screen.frame.width))x\(Int(screen.frame.height))")
+    }
+}
+
+/// `Lunalert --orientation-check`: where due east and due west land on the screen-wide sky.
+@MainActor
+enum OrientationCheck {
+    static func run() {
+        let p = SkyProjection(size: CGSize(width: 1512, height: 982), latitude: 31.8)
+        let east = p.point(alt: 10, az: 90), south = p.point(alt: 10, az: 180), west = p.point(alt: 10, az: 270)
+        print("east x:", east.map { Int($0.x) } ?? -1, " south x:", south.map { Int($0.x) } ?? -1,
+              " west x:", west.map { Int($0.x) } ?? -1, "(screen width 1512; facing south, east should be smallest)")
     }
 }

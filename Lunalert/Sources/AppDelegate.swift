@@ -7,6 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         LegacyMigration.run()
+        if let i = CommandLine.arguments.firstIndex(of: "--viewport-test"), i + 1 < CommandLine.arguments.count {
+            ViewportTest.run(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+            exit(0)
+        }
+        if CommandLine.arguments.contains("--orientation-check") {
+            OrientationCheck.run()
+            exit(0)
+        }
         if CommandLine.arguments.contains("--sky-check") {
             Self.skyCheck()
             exit(0)

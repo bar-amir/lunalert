@@ -1,3 +1,4 @@
+import AppKit
 import CoreLocation
 import Foundation
 import SwiftUI
@@ -172,16 +173,17 @@ final class SkyLocation: NSObject, ObservableObject, CLLocationManagerDelegate {
 
 // MARK: - Projection
 
-/// Looking up toward the south (north below the equator), horizon near the bottom. The horizontal field of view
-/// is fixed, so the zoom never changes; a taller panel tilts the view up toward the zenith instead.
+/// One sky for the whole screen: looking up toward the south (north below the equator), the horizon near the
+/// bottom of the screen and the zenith above its middle. Every window shows the part of it behind the window.
 struct SkyProjection {
+    /// The screen's size.
     let size: CGSize
     let latitude: Double
     var centerAz: Double { latitude >= 0 ? 180 : 0 }
-    /// Where the horizon sits, measured up from the bottom edge (it stays clear of the floating footer).
-    let horizonInset: CGFloat = 90
-    /// Horizontal field of view, degrees.
-    let fieldOfView = 100.0
+    /// Where the horizon sits, measured up from the bottom of the screen.
+    let horizonInset: CGFloat = 60
+    /// Horizontal field of view across the whole screen, degrees.
+    let fieldOfView = 180.0
 
     private var scale: CGFloat { (size.width / 2) / CGFloat(2 * tan(fieldOfView / 2 * Astronomy.rad / 2)) }
 
@@ -200,8 +202,8 @@ struct SkyProjection {
         let k = 2 / (1 + cosC)
         let x = k * cos(a) * sin(dAz)
         let y = k * (cos(a0) * sin(a) - sin(a0) * cos(a) * cos(dAz))
-        // East is to the left when facing south, as on a real sky.
-        return CGPoint(x: size.width / 2 - CGFloat(x) * scale, y: size.height / 2 - CGFloat(y) * scale)
+        // Facing south, east is on the left: east has dAz < 0, so it must land left of centre.
+        return CGPoint(x: size.width / 2 + CGFloat(x) * scale, y: size.height / 2 - CGFloat(y) * scale)
     }
 }
 
@@ -284,6 +286,9 @@ struct SkyFrame {
 /// The real sky over the observer, right now: stars, constellation lines, the Moon and a twilight glow.
 struct RealSky: View {
     @ObservedObject private var location = SkyLocation.shared
+    @Environment(\.skyViewport) private var fixedViewport
+    @Environment(\.skyRole) private var role
+    @State private var trackedViewport: SkyViewport?
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.skyDate) private var fixedDate
@@ -294,32 +299,61 @@ struct RealSky: View {
 
     var body: some View {
         GeometryReader { geo in
+            let viewport = fixedViewport ?? trackedViewport ?? SkyViewport.guess(for: geo.size)
             TimelineView(.everyMinute) { minute in
                 let date = fixedDate ?? minute.date
                 let frame = model.frame(date: date, latitude: location.latitude,
-                                        longitude: location.longitude, size: geo.size)
+                                        longitude: location.longitude, size: viewport.screen)
+                let origin = viewport.origin
                 ZStack {
-                    twilight(frame.sunAlt)
-                        .opacity(model.stargazing ? 0.25 : 1)
-                        .animation(.easeInOut(duration: 0.6), value: model.stargazing)
-                    Canvas { ctx, _ in drawStatic(frame, in: &ctx) }
+                    Canvas { ctx, size in
+                        ctx.translateBy(x: -origin.x, y: -origin.y)
+                        drawGlow(frame, screen: viewport.screen, in: &ctx)
+                        drawStatic(frame, visible: CGRect(origin: origin, size: size), in: &ctx)
+                    }
                     if let id = model.hovered, let constellation = frame.constellations.first(where: { $0.id == id }) {
-                        Canvas { ctx, _ in drawHighlight(constellation.segments, in: &ctx) }
-                            .id(id)
-                            .transition(.opacity)
+                        Canvas { ctx, _ in
+                            ctx.translateBy(x: -origin.x, y: -origin.y)
+                            drawHighlight(constellation.segments, in: &ctx)
+                        }
+                        .id(id)
+                        .transition(.opacity)
                     }
                     if reduceMotion || !animatedSky || frozenTime != nil {
-                        Canvas { ctx, _ in drawBright(frame, time: frozenTime ?? 0, in: &ctx) }
+                        Canvas { ctx, size in
+                            ctx.translateBy(x: -origin.x, y: -origin.y)
+                            drawBright(frame, time: frozenTime ?? 0, visible: CGRect(origin: origin, size: size), in: &ctx)
+                        }
                     } else {
                         TimelineView(.animation(minimumInterval: 1 / 12)) { tick in
-                            Canvas { ctx, _ in drawBright(frame, time: tick.date.timeIntervalSinceReferenceDate, in: &ctx) }
+                            Canvas { ctx, size in
+                                ctx.translateBy(x: -origin.x, y: -origin.y)
+                                drawBright(frame, time: tick.date.timeIntervalSinceReferenceDate,
+                                           visible: CGRect(origin: origin, size: size), in: &ctx)
+                            }
                         }
                     }
                 }
                 .animation(.easeOut(duration: 0.3), value: model.hovered)
+                .animation(.easeInOut(duration: 0.6), value: model.stargazing)
+                .onAppear { if role == .panel { model.panelOrigin = origin } }
+                .onChange(of: origin) { _, new in if role == .panel { model.panelOrigin = new } }
             }
         }
+        .background(SkyViewportReader { trackedViewport = $0 })
         .accessibilityHidden(true)
+    }
+
+    /// The sky's glow, anchored to the screen: a little lighter toward the horizon, warmer in twilight.
+    /// It steps back in Stargaze, leaving more sky.
+    private func drawGlow(_ frame: SkyFrame, screen: CGSize, in ctx: inout GraphicsContext) {
+        let rect = CGRect(origin: .zero, size: screen)
+        let base = night ? Color(red: 0.17, green: 0.24, blue: 0.37) : Color(red: 0.79, green: 0.86, blue: 0.96)
+        let strength = max(0, min(1, (frame.sunAlt + 18) / 18))
+        let dim = model.stargazing ? 0.25 : 1.0
+        ctx.fill(Path(rect), with: .linearGradient(
+            Gradient(colors: [.clear, base.opacity((night ? 0.32 + 0.2 * strength : 0.6) * dim)]),
+            startPoint: CGPoint(x: 0, y: screen.height * 0.35), endPoint: CGPoint(x: 0, y: screen.height)))
     }
 
     private var night: Bool { scheme == .dark }
@@ -342,22 +376,15 @@ struct RealSky: View {
         }
     }
 
-    /// A faint glow on the horizon that follows the real Sun: blue twilight, deeper after dusk.
-    @ViewBuilder
-    private func twilight(_ sunAlt: Double) -> some View {
-        let strength = max(0, min(1, (sunAlt + 18) / 18))
-        LinearGradient(colors: [.clear, Color(red: 0.35, green: 0.48, blue: 0.75).opacity(night ? 0.10 + 0.28 * strength : 0.25)],
-                       startPoint: .center, endPoint: .bottom)
-    }
-
-    private func drawStatic(_ frame: SkyFrame, in ctx: inout GraphicsContext) {
+    private func drawStatic(_ frame: SkyFrame, visible: CGRect, in ctx: inout GraphicsContext) {
+        let visible = visible.insetBy(dx: -12, dy: -12)
         let ink: Color = night ? .white : Color(red: 0.25, green: 0.33, blue: 0.5)
         if constellationLines {
             var path = Path()
             for (a, b) in frame.segments { path.move(to: a); path.addLine(to: b) }
             ctx.stroke(path, with: .color(ink.opacity(night ? 0.065 : 0.10)), lineWidth: 0.6)
         }
-        for star in frame.stars where star.mag >= 2.6 {
+        for star in frame.stars where star.mag >= 2.6 && visible.contains(star.p) {
             let r = max(0.45, 1.95 - 0.28 * star.mag)
             let opacity = max(0.18, min(0.95, 1.15 - 0.14 * star.mag))
             ctx.fill(Path(ellipseIn: CGRect(x: star.p.x - r, y: star.p.y - r, width: r * 2, height: r * 2)),
@@ -367,9 +394,10 @@ struct RealSky: View {
     }
 
     /// The brightest stars, with a soft glow and a gentle twinkle.
-    private func drawBright(_ frame: SkyFrame, time: TimeInterval, in ctx: inout GraphicsContext) {
+    private func drawBright(_ frame: SkyFrame, time: TimeInterval, visible: CGRect, in ctx: inout GraphicsContext) {
         let ink: Color = night ? .white : Color(red: 0.25, green: 0.33, blue: 0.5)
-        for (i, star) in frame.stars.enumerated() where star.mag < 2.6 {
+        let visible = visible.insetBy(dx: -12, dy: -12)
+        for (i, star) in frame.stars.enumerated() where star.mag < 2.6 && visible.contains(star.p) {
             let twinkle = (0.82 + 0.18 * sin(time * 1.7 + Double(i) * 1.37)) * star.fade
             let r = max(1.0, 2.2 - 0.32 * star.mag)
             if night {
@@ -494,6 +522,8 @@ final class SkyModel: ObservableObject {
         didSet { UserDefaults.standard.set(stargazing, forKey: "stargazing") }
     }
     @Published var hovered: String?
+    /// Where the panel's sky sits on the screen, for turning pointer positions into sky positions.
+    var panelOrigin: CGPoint = .zero
     /// The sky as last drawn, for hit-testing the pointer.
     private(set) var frame: SkyFrame?
     private var frameKey: String?
@@ -580,10 +610,6 @@ struct StargazeOverlay: View {
                         Text(name)
                             .font(.system(size: 24, weight: .semibold, design: .serif))
                             .foregroundStyle(Theme.starlight)
-                        Text(id.uppercased())
-                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                            .tracking(2)
-                            .foregroundStyle(Theme.secondaryText)
                     }
                     .padding(.top, 20)
                     .padding(.leading, Spacing.gutter + 4)
@@ -621,7 +647,7 @@ final class Parallax: ObservableObject {
     static let shared = Parallax()
     /// How far the sky layer extends past the panel on each side, so drifting never shows an edge.
     static let bleed: CGFloat = 14
-    static let reach: CGFloat = 8
+    static let reach: CGFloat = 5
 
     @Published private(set) var offset: CGSize = .zero
 
@@ -633,7 +659,8 @@ final class Parallax: ObservableObject {
 
     /// A point in the panel, in the sky layer's own coordinates.
     func skyPoint(fromPanel p: CGPoint) -> CGPoint {
-        CGPoint(x: p.x + Parallax.bleed - offset.width, y: p.y + Parallax.bleed - offset.height)
+        let origin = SkyModel.shared.panelOrigin
+        return CGPoint(x: p.x + Parallax.bleed - offset.width + origin.x, y: p.y + Parallax.bleed - offset.height + origin.y)
     }
 }
 
@@ -647,5 +674,90 @@ struct ParallaxSky: View {
             .padding(-Parallax.bleed)
             .offset(reduceMotion ? .zero : parallax.offset)
             .animation(.interpolatingSpring(stiffness: 40, damping: 12), value: parallax.offset)
+    }
+}
+
+// MARK: - Where a window sits on its screen
+
+/// A window's slice of the screen-wide sky: the screen's size and where the sky view's top-left corner is on it.
+struct SkyViewport: Equatable {
+    var screen: CGSize
+    var origin: CGPoint
+
+    /// Before the window reports its position: centred on the main screen.
+    @MainActor static func guess(for size: CGSize) -> SkyViewport {
+        let screen = NSScreen.main?.frame.size ?? CGSize(width: 1512, height: 982)
+        return SkyViewport(screen: screen, origin: CGPoint(x: (screen.width - size.width) / 2, y: 40))
+    }
+}
+
+enum SkyRole { case panel, other }
+
+private struct SkyViewportKey: EnvironmentKey { static let defaultValue: SkyViewport? = nil }
+private struct SkyRoleKey: EnvironmentKey { static let defaultValue: SkyRole = .other }
+
+extension EnvironmentValues {
+    /// A fixed viewport for snapshot renders.
+    var skyViewport: SkyViewport? {
+        get { self[SkyViewportKey.self] }
+        set { self[SkyViewportKey.self] = newValue }
+    }
+
+    var skyRole: SkyRole {
+        get { self[SkyRoleKey.self] }
+        set { self[SkyRoleKey.self] = newValue }
+    }
+}
+
+/// Reports where this view is on its screen, live while the window moves or resizes.
+struct SkyViewportReader: NSViewRepresentable {
+    let onChange: (SkyViewport) -> Void
+
+    func makeNSView(context: Context) -> TrackingView {
+        let view = TrackingView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: TrackingView, context: Context) {
+        view.onChange = onChange
+    }
+
+    final class TrackingView: NSView {
+        var onChange: ((SkyViewport) -> Void)?
+        private var observers: [NSObjectProtocol] = []
+        private var last: SkyViewport?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else { return }
+            for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didChangeScreenNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    self?.report()
+                })
+            }
+            report()
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            report()
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        private func report() {
+            guard let window, let screen = window.screen ?? NSScreen.main else { return }
+            let rect = window.convertToScreen(convert(bounds, to: nil))
+            let viewport = SkyViewport(screen: screen.frame.size,
+                                       origin: CGPoint(x: rect.minX - screen.frame.minX, y: screen.frame.maxY - rect.maxY))
+            guard viewport != last else { return }
+            last = viewport
+            DispatchQueue.main.async { [onChange] in onChange?(viewport) }
+        }
+
+        deinit { observers.forEach(NotificationCenter.default.removeObserver) }
     }
 }

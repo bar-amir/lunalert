@@ -22,7 +22,12 @@ final class SettingsWindowController {
             window.appearance = NSAppearance(named: .darkAqua)
             window.center()
             self.window = window
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                   queue: .main) { _ in
+                Task { @MainActor in StatusItemController.shared.keepPanelOpen(false) }
+            }
         }
+        StatusItemController.shared.keepPanelOpen(true)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -66,25 +71,23 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             tabBar
-            VStack(alignment: .leading, spacing: 12) {
-                switch tab {
-                case .account: account
-                case .alerts: alerts
-                case .inbox: inbox
-                case .sky: skyPane
-                case .about: about
+            // Every pane is laid out at once, so the window keeps the tallest one's size and never jumps.
+            ZStack(alignment: .top) {
+                ForEach(SettingsTab.allCases) { item in
+                    pane(item)
+                        .opacity(item == tab ? 1 : 0)
+                        .allowsHitTesting(item == tab)
+                        .accessibilityHidden(item != tab)
                 }
             }
             .padding(Spacing.gutter)
             .padding(.bottom, 6)
-            .id(tab)
-            .transition(.opacity)
         }
         .frame(width: 500)
         .fixedSize(horizontal: false, vertical: true)
-        .background(ParallaxSky())
+        .background(SpaceBackground())
         .environment(\.colorScheme, .dark)
-        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: tab)
+        .animation(.easeInOut(duration: 0.18), value: tab)
         .onAppear { store.refreshBannerPermission() }
         .confirmationDialog("Disconnect from GitHub?", isPresented: $confirmDisconnect) {
             Button("Disconnect", role: .destructive) { store.disconnect() }
@@ -137,6 +140,17 @@ struct SettingsView: View {
     }
 
     // MARK: Panes
+
+    @ViewBuilder
+    private func pane(_ item: SettingsTab) -> some View {
+        switch item {
+        case .account: account
+        case .alerts: alerts
+        case .inbox: inbox
+        case .sky: skyPane
+        case .about: about
+        }
+    }
 
     @ViewBuilder
     private var account: some View {
