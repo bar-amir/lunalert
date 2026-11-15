@@ -53,6 +53,8 @@ struct MenuContentView: View {
         .overlay {
             if sky.stargazing { StargazeOverlay().transition(.opacity) }
         }
+        .overlay { TooltipLayer() }
+        .coordinateSpace(name: TooltipLayer.space)
         .background(ParallaxSky().environment(\.skyRole, .panel))
         .clipped()
         .onGeometryChange(for: CGSize.self) { $0.size } action: { panelSize = $0 }

@@ -121,7 +121,7 @@ enum Snapshot {
     }
 
     /// Lays the view out in an offscreen window (so AppKit-backed controls draw) and writes a 2x PNG.
-    static func render<V: View>(_ view: V, dark: Bool, to url: URL, at screenPoint: CGPoint? = nil) {
+    static func render<V: View>(_ view: V, dark: Bool, to url: URL, at screenPoint: CGPoint? = nil, layers: Bool = false) {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let host = NSHostingView(rootView: view)
         host.appearance = appearance
@@ -155,8 +155,14 @@ enum Snapshot {
                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
                                          bytesPerRow: 0, bitsPerPixel: 0) else { return }
         rep.size = size
-        appearance?.performAsCurrentDrawingAppearance {
-            host.cacheDisplay(in: host.bounds, to: rep)
+        if layers, let layer = host.layer, let ctx = NSGraphicsContext(bitmapImageRep: rep)?.cgContext {
+            // Layer-backed content (the live sky) only shows up when the layer tree itself is rendered.
+            ctx.scaleBy(x: scale, y: scale)
+            layer.render(in: ctx)
+        } else {
+            appearance?.performAsCurrentDrawingAppearance {
+                host.cacheDisplay(in: host.bounds, to: rep)
+            }
         }
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
@@ -437,7 +443,16 @@ enum ViewportTest {
         let topLeft = CGPoint(x: screen.frame.minX + 300, y: screen.frame.maxY - 200)
         Snapshot.render(SettingsView(tab: .sky).environmentObject(store).environment(\.snapshotMode, true)
                             .environment(\.skyDate, Snapshot.skyDate).environment(\.frozenTime, 12),
-                        dark: true, to: folder.appendingPathComponent("window.png"), at: topLeft)
+                        dark: true, to: folder.appendingPathComponent("window.png"), at: topLeft, layers: true)
+        layerTest(screen: screen, folder: folder)
+        let start = Date()
+        let model = SkyModel.shared
+        let frame = model.frame(date: Snapshot.skyDate.addingTimeInterval(3600), latitude: SkyLocation.shared.latitude,
+                                longitude: SkyLocation.shared.longitude, size: screen.frame.size)
+        let framed = Date()
+        _ = model.image(frame: frame, screen: screen.frame.size, night: true, lines: true, dim: false, brightCores: false)
+        print(String(format: "sky for a minute: positions %.0f ms, painting %.0f ms", framed.timeIntervalSince(start) * 1000,
+                     Date().timeIntervalSince(framed) * 1000))
         Snapshot.render(SpaceBackground().frame(width: screen.frame.width, height: screen.frame.height)
                             .environment(\.snapshotMode, true).environment(\.frozenTime, 12)
                             .environment(\.skyDate, Snapshot.skyDate)
@@ -455,5 +470,33 @@ enum OrientationCheck {
         let east = p.point(alt: 10, az: 90), south = p.point(alt: 10, az: 180), west = p.point(alt: 10, az: 270)
         print("east x:", east.map { Int($0.x) } ?? -1, " south x:", south.map { Int($0.x) } ?? -1,
               " west x:", west.map { Int($0.x) } ?? -1, "(screen width 1512; facing south, east should be smallest)")
+    }
+}
+
+extension ViewportTest {
+    /// The live sky layer on its own, in a window at a known spot: renders its layer tree to a PNG.
+    static func layerTest(screen: NSScreen, folder: URL) {
+        let model = SkyModel.shared
+        let size = screen.frame.size
+        let frame = model.frame(date: Snapshot.skyDate, latitude: SkyLocation.shared.latitude,
+                                longitude: SkyLocation.shared.longitude, size: size)
+        let image = model.image(frame: frame, screen: size, night: true, lines: true, dim: false, brightCores: true)
+        let view = SkyLayerView(role: .other)
+        let viewSize = CGSize(width: 500, height: 300)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: viewSize), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = view
+        window.setFrameTopLeftPoint(CGPoint(x: screen.frame.minX + 300, y: screen.frame.maxY - 200))
+        view.update(image: image, frame: frame, frameKey: model.frameKeyValue, screen: size, hovered: nil, twinkle: false, night: true)
+        view.layoutSubtreeIfNeeded()
+        let scale: CGFloat = 2
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(viewSize.width * scale), pixelsHigh: Int(viewSize.height * scale),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let ctx = NSGraphicsContext(bitmapImageRep: rep)?.cgContext, let layer = view.layer else { return }
+        ctx.setFillColor(NSColor.black.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: rep.pixelsWide, height: rep.pixelsHigh))
+        ctx.scaleBy(x: scale, y: scale)
+        layer.render(in: ctx)
+        try? rep.representation(using: .png, properties: [:])?.write(to: folder.appendingPathComponent("layer.png"))
     }
 }

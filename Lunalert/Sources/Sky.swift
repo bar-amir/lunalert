@@ -283,83 +283,117 @@ struct SkyFrame {
     }
 }
 
-/// The real sky over the observer, right now: stars, constellation lines, the Moon and a twilight glow.
+/// The real sky over the observer, right now. The whole screen's sky is painted once a minute into one image;
+/// each window shows its part of it. In the app that's a Core Animation layer that only slides when a window
+/// moves, so dragging costs nothing; offscreen renders (snapshots) use plain SwiftUI so they can be captured.
 struct RealSky: View {
     @ObservedObject private var location = SkyLocation.shared
+    @ObservedObject private var model = SkyModel.shared
     @Environment(\.skyViewport) private var fixedViewport
     @Environment(\.skyRole) private var role
-    @State private var trackedViewport: SkyViewport?
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.skyDate) private var fixedDate
-    @Environment(\.frozenTime) private var frozenTime
     @AppStorage("animatedSky") private var animatedSky = true
     @AppStorage("constellationLines") private var constellationLines = true
-    @ObservedObject private var model = SkyModel.shared
+    @State private var liveScreen: CGSize?
 
     var body: some View {
-        GeometryReader { geo in
-            let viewport = fixedViewport ?? trackedViewport ?? SkyViewport.guess(for: geo.size)
-            TimelineView(.everyMinute) { minute in
-                let date = fixedDate ?? minute.date
-                let frame = model.frame(date: date, latitude: location.latitude,
-                                        longitude: location.longitude, size: viewport.screen)
-                let origin = viewport.origin
-                ZStack {
-                    Canvas { ctx, size in
-                        ctx.translateBy(x: -origin.x, y: -origin.y)
-                        drawGlow(frame, screen: viewport.screen, in: &ctx)
-                        drawStatic(frame, visible: CGRect(origin: origin, size: size), in: &ctx)
-                    }
-                    if let id = model.hovered, let constellation = frame.constellations.first(where: { $0.id == id }) {
-                        Canvas { ctx, _ in
-                            ctx.translateBy(x: -origin.x, y: -origin.y)
-                            drawHighlight(constellation.segments, in: &ctx)
+        TimelineView(.everyMinute) { minute in
+            let date = fixedDate ?? minute.date
+            let screen = fixedViewport?.screen ?? liveScreen ?? NSScreen.main?.frame.size ?? CGSize(width: 1512, height: 982)
+            let frame = model.frame(date: date, latitude: location.latitude, longitude: location.longitude, size: screen)
+            let night = scheme == .dark
+            if let fixed = fixedViewport {
+                let image = model.image(frame: frame, screen: screen, night: night, lines: constellationLines,
+                                        dim: model.stargazing, brightCores: true)
+                GeometryReader { geo in
+                    ZStack(alignment: .topLeading) {
+                        if let image {
+                            Image(decorative: image, scale: SkyModel.imageScale)
+                                .offset(x: -fixed.origin.x, y: -fixed.origin.y)
                         }
-                        .id(id)
-                        .transition(.opacity)
-                    }
-                    if reduceMotion || !animatedSky || frozenTime != nil {
-                        Canvas { ctx, size in
-                            ctx.translateBy(x: -origin.x, y: -origin.y)
-                            drawBright(frame, time: frozenTime ?? 0, visible: CGRect(origin: origin, size: size), in: &ctx)
-                        }
-                    } else {
-                        TimelineView(.animation(minimumInterval: 1 / 12)) { tick in
-                            Canvas { ctx, size in
-                                ctx.translateBy(x: -origin.x, y: -origin.y)
-                                drawBright(frame, time: tick.date.timeIntervalSinceReferenceDate,
-                                           visible: CGRect(origin: origin, size: size), in: &ctx)
+                        if let id = model.hovered, let c = frame.constellations.first(where: { $0.id == id }) {
+                            Canvas { ctx, _ in
+                                ctx.translateBy(x: -fixed.origin.x, y: -fixed.origin.y)
+                                SkyPainter.paintHighlight(c.segments, night: night, in: &ctx)
                             }
                         }
                     }
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                    .clipped()
                 }
-                .animation(.easeOut(duration: 0.3), value: model.hovered)
-                .animation(.easeInOut(duration: 0.6), value: model.stargazing)
-                .onAppear { if role == .panel { model.panelOrigin = origin } }
-                .onChange(of: origin) { _, new in if role == .panel { model.panelOrigin = new } }
+            } else {
+                let twinkle = animatedSky && !reduceMotion
+                SkyLayer(image: model.image(frame: frame, screen: screen, night: night, lines: constellationLines,
+                                            dim: model.stargazing, brightCores: !twinkle),
+                         frame: frame, frameKey: model.frameKeyValue, screen: screen,
+                         hovered: model.hovered, twinkle: twinkle, night: night, role: role) { size in
+                    if size != liveScreen { liveScreen = size }
+                }
             }
         }
-        .background(SkyViewportReader { trackedViewport = $0 })
         .accessibilityHidden(true)
     }
+}
 
-    /// The sky's glow, anchored to the screen: a little lighter toward the horizon, warmer in twilight.
-    /// It steps back in Stargaze, leaving more sky.
-    private func drawGlow(_ frame: SkyFrame, screen: CGSize, in ctx: inout GraphicsContext) {
-        let rect = CGRect(origin: .zero, size: screen)
-        let base = night ? Color(red: 0.17, green: 0.24, blue: 0.37) : Color(red: 0.79, green: 0.86, blue: 0.96)
-        let strength = max(0, min(1, (frame.sunAlt + 18) / 18))
-        let dim = model.stargazing ? 0.25 : 1.0
-        ctx.fill(Path(rect), with: .linearGradient(
-            Gradient(colors: [.clear, base.opacity((night ? 0.32 + 0.2 * strength : 0.6) * dim)]),
-            startPoint: CGPoint(x: 0, y: screen.height * 0.35), endPoint: CGPoint(x: 0, y: screen.height)))
+/// Drawing for the sky image and the hover highlight, in screen coordinates (top-left origin).
+@MainActor
+enum SkyPainter {
+    static func image(frame: SkyFrame, screen: CGSize, night: Bool, lines: Bool, dim: Bool, brightCores: Bool,
+                      scale: CGFloat) -> CGImage? {
+        let content = Canvas { ctx, _ in
+            paint(frame, screen: screen, night: night, lines: lines, dim: dim, brightCores: brightCores, in: &ctx)
+        }
+        .frame(width: screen.width, height: screen.height)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = scale
+        renderer.isOpaque = false
+        return renderer.cgImage
     }
 
-    private var night: Bool { scheme == .dark }
+    static func ink(night: Bool) -> Color { night ? .white : Color(red: 0.25, green: 0.33, blue: 0.5) }
+
+    static func paint(_ frame: SkyFrame, screen: CGSize, night: Bool, lines: Bool, dim: Bool, brightCores: Bool,
+                      in ctx: inout GraphicsContext) {
+        let ink = ink(night: night)
+        // The glow toward the horizon, warmer in twilight; it steps back in Stargaze.
+        let base = night ? Color(red: 0.17, green: 0.24, blue: 0.37) : Color(red: 0.79, green: 0.86, blue: 0.96)
+        let strength = max(0, min(1, (frame.sunAlt + 18) / 18))
+        ctx.fill(Path(CGRect(origin: .zero, size: screen)), with: .linearGradient(
+            Gradient(colors: [.clear, base.opacity((night ? 0.32 + 0.2 * strength : 0.6) * (dim ? 0.25 : 1))]),
+            startPoint: CGPoint(x: 0, y: screen.height * 0.35), endPoint: CGPoint(x: 0, y: screen.height)))
+        if lines {
+            var path = Path()
+            for (a, b) in frame.segments { path.move(to: a); path.addLine(to: b) }
+            ctx.stroke(path, with: .color(ink.opacity(night ? 0.065 : 0.10)), lineWidth: 0.6)
+        }
+        for star in frame.stars where star.mag >= 2.6 {
+            let r = max(0.45, 1.95 - 0.28 * star.mag)
+            let opacity = max(0.18, min(0.95, 1.15 - 0.14 * star.mag))
+            ctx.fill(Path(ellipseIn: CGRect(x: star.p.x - r, y: star.p.y - r, width: r * 2, height: r * 2)),
+                     with: .color(night ? star.color.opacity(opacity * star.fade) : ink.opacity(opacity * 0.5 * star.fade)))
+        }
+        for star in frame.stars where star.mag < 2.6 {
+            let r = brightRadius(star.mag)
+            if night {
+                var glow = ctx
+                glow.addFilter(.blur(radius: r * 1.6))
+                glow.fill(Path(ellipseIn: CGRect(x: star.p.x - r * 1.6, y: star.p.y - r * 1.6, width: r * 3.2, height: r * 3.2)),
+                          with: .color(star.color.opacity(0.35 * star.fade)))
+            }
+            if brightCores {
+                ctx.fill(Path(ellipseIn: CGRect(x: star.p.x - r, y: star.p.y - r, width: r * 2, height: r * 2)),
+                         with: .color(night ? star.color.opacity(star.fade) : ink.opacity(0.55 * star.fade)))
+            }
+        }
+        if let moon = frame.moon { paintMoon(moon, in: &ctx) }
+    }
+
+    static func brightRadius(_ mag: Double) -> CGFloat { max(1.0, 2.2 - 0.32 * mag) }
 
     /// The hovered constellation: its lines lit and its stars brightened, with a soft glow.
-    private func drawHighlight(_ segments: [(CGPoint, CGPoint)], in ctx: inout GraphicsContext) {
+    static func paintHighlight(_ segments: [(CGPoint, CGPoint)], night: Bool, in ctx: inout GraphicsContext) {
         let ink: Color = night ? Color(red: 0.8, green: 0.88, blue: 1) : Color(red: 0.18, green: 0.3, blue: 0.6)
         var path = Path()
         for (a, b) in segments { path.move(to: a); path.addLine(to: b) }
@@ -367,51 +401,17 @@ struct RealSky: View {
         glow.addFilter(.blur(radius: 4))
         glow.stroke(path, with: .color(ink.opacity(0.5)), lineWidth: 2.5)
         ctx.stroke(path, with: .color(ink.opacity(0.85)), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-        var seen = Set<String>()
-        for point in segments.flatMap({ [$0.0, $0.1] }) where seen.insert("\(Int(point.x)):\(Int(point.y))").inserted {
-            var halo = ctx
-            halo.addFilter(.blur(radius: 3))
-            halo.fill(Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)), with: .color(ink.opacity(0.6)))
+        for point in vertices(segments) {
             ctx.fill(Path(ellipseIn: CGRect(x: point.x - 1.8, y: point.y - 1.8, width: 3.6, height: 3.6)), with: .color(.white))
         }
     }
 
-    private func drawStatic(_ frame: SkyFrame, visible: CGRect, in ctx: inout GraphicsContext) {
-        let visible = visible.insetBy(dx: -12, dy: -12)
-        let ink: Color = night ? .white : Color(red: 0.25, green: 0.33, blue: 0.5)
-        if constellationLines {
-            var path = Path()
-            for (a, b) in frame.segments { path.move(to: a); path.addLine(to: b) }
-            ctx.stroke(path, with: .color(ink.opacity(night ? 0.065 : 0.10)), lineWidth: 0.6)
-        }
-        for star in frame.stars where star.mag >= 2.6 && visible.contains(star.p) {
-            let r = max(0.45, 1.95 - 0.28 * star.mag)
-            let opacity = max(0.18, min(0.95, 1.15 - 0.14 * star.mag))
-            ctx.fill(Path(ellipseIn: CGRect(x: star.p.x - r, y: star.p.y - r, width: r * 2, height: r * 2)),
-                     with: .color(night ? star.color.opacity(opacity * star.fade) : ink.opacity(opacity * 0.5 * star.fade)))
-        }
-        if let moon = frame.moon { drawMoon(moon, in: &ctx) }
+    static func vertices(_ segments: [(CGPoint, CGPoint)]) -> [CGPoint] {
+        var seen = Set<String>()
+        return segments.flatMap { [$0.0, $0.1] }.filter { seen.insert("\(Int($0.x)):\(Int($0.y))").inserted }
     }
 
-    /// The brightest stars, with a soft glow and a gentle twinkle.
-    private func drawBright(_ frame: SkyFrame, time: TimeInterval, visible: CGRect, in ctx: inout GraphicsContext) {
-        let ink: Color = night ? .white : Color(red: 0.25, green: 0.33, blue: 0.5)
-        let visible = visible.insetBy(dx: -12, dy: -12)
-        for (i, star) in frame.stars.enumerated() where star.mag < 2.6 && visible.contains(star.p) {
-            let twinkle = (0.82 + 0.18 * sin(time * 1.7 + Double(i) * 1.37)) * star.fade
-            let r = max(1.0, 2.2 - 0.32 * star.mag)
-            if night {
-                var glow = ctx
-                glow.addFilter(.blur(radius: r * 1.6))
-                glow.fill(Path(ellipseIn: CGRect(x: star.p.x - r * 1.6, y: star.p.y - r * 1.6, width: r * 3.2, height: r * 3.2)),
-                          with: .color(star.color.opacity(0.35 * twinkle)))
-            }
-            ctx.fill(Path(ellipseIn: CGRect(x: star.p.x - r, y: star.p.y - r, width: r * 2, height: r * 2)),
-                     with: .color(night ? star.color.opacity(twinkle) : ink.opacity(0.55 * twinkle)))
-        }
-    }
-
-    private func drawMoon(_ moon: (p: CGPoint, illuminated: Double, waxing: Bool, sunAngle: Double), in ctx: inout GraphicsContext) {
+    static func paintMoon(_ moon: (p: CGPoint, illuminated: Double, waxing: Bool, sunAngle: Double), in ctx: inout GraphicsContext) {
         let r: CGFloat = 7
         let rect = CGRect(x: moon.p.x - r, y: moon.p.y - r, width: r * 2, height: r * 2)
         var glow = ctx
@@ -419,7 +419,6 @@ struct RealSky: View {
         glow.fill(Path(ellipseIn: rect.insetBy(dx: -4, dy: -4)),
                   with: .color(Color(red: 0.85, green: 0.9, blue: 1).opacity(0.25 + 0.35 * moon.illuminated)))
         ctx.fill(Path(ellipseIn: rect), with: .color(Color(red: 0.25, green: 0.28, blue: 0.35).opacity(0.9)))
-        // Lit part: a half-disc toward the Sun plus (or minus) an ellipse for the terminator.
         var lit = ctx
         lit.translateBy(x: moon.p.x, y: moon.p.y)
         lit.rotate(by: .radians(moon.sunAngle))
@@ -433,6 +432,236 @@ struct RealSky: View {
         lit.fill(half, with: .color(light))
         // Gibbous: the terminator bulges into the dark half. Crescent: it eats into the lit half.
         lit.fill(terminator, with: .color(k >= 0.5 ? light : dark))
+    }
+}
+
+/// The live sky: a layer-backed view holding the screen's sky image, twinkle and highlight layers. Moving the
+/// window slides the layer (on every display refresh while dragging); nothing is redrawn.
+struct SkyLayer: NSViewRepresentable {
+    let image: CGImage?
+    let frame: SkyFrame
+    let frameKey: String
+    let screen: CGSize
+    let hovered: String?
+    let twinkle: Bool
+    let night: Bool
+    let role: SkyRole
+    let onScreenChange: (CGSize) -> Void
+
+    func makeNSView(context: Context) -> SkyLayerView {
+        let view = SkyLayerView(role: role)
+        view.onScreenChange = onScreenChange
+        return view
+    }
+
+    func updateNSView(_ view: SkyLayerView, context: Context) {
+        view.onScreenChange = onScreenChange
+        view.update(image: image, frame: frame, frameKey: frameKey, screen: screen, hovered: hovered,
+                    twinkle: twinkle, night: night)
+    }
+}
+
+final class SkyLayerView: NSView {
+    var onScreenChange: ((CGSize) -> Void)?
+    private let role: SkyRole
+    private let container = CALayer()
+    private let imageLayer = CALayer()
+    private let twinkleLayer = CALayer()
+    private let highlightLines = CAShapeLayer()
+    private let highlightDots = CAShapeLayer()
+    private var screen = CGSize.zero
+    private var origin = CGPoint.zero
+    private var parallax = CGSize.zero
+    private var builtTwinkleKey: String?
+    private var shownHighlight: String?
+    private var observers: [NSObjectProtocol] = []
+    private var parallaxSubscription: Any?
+    private var link: CADisplayLink?
+    private var quietTicks = 0
+
+    init(role: SkyRole) {
+        self.role = role
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        container.anchorPoint = .zero
+        for sub in [imageLayer, twinkleLayer, highlightLines, highlightDots] as [CALayer] {
+            sub.anchorPoint = .zero
+            container.addSublayer(sub)
+        }
+        imageLayer.contentsGravity = .resize
+        for shape in [highlightLines, highlightDots] {
+            shape.opacity = 0
+            shape.shadowOffset = .zero
+            shape.shadowRadius = 4
+            shape.shadowOpacity = 0.9
+        }
+        highlightLines.fillColor = nil
+        highlightLines.lineWidth = 1.1
+        highlightLines.lineCap = .round
+        highlightDots.fillColor = NSColor.white.cgColor
+        layer?.addSublayer(container)
+        if role == .panel {
+            parallaxSubscription = Parallax.shared.$offset.sink { [weak self] offset in
+                self?.parallax = offset
+                self?.reposition(animated: true)
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func update(image: CGImage?, frame: SkyFrame, frameKey: String, screen: CGSize, hovered: String?, twinkle: Bool, night: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if imageLayer.contents as! CGImage? !== image { imageLayer.contents = image }
+        if self.screen != screen {
+            self.screen = screen
+            container.bounds = CGRect(origin: .zero, size: screen)
+            for sub in [imageLayer, twinkleLayer, highlightLines, highlightDots] as [CALayer] { sub.frame = container.bounds }
+        }
+        let twinkleKey = "\(frameKey)|\(twinkle)|\(night)"
+        if twinkleKey != builtTwinkleKey {
+            builtTwinkleKey = twinkleKey
+            buildTwinkle(frame: frame, twinkle: twinkle, night: night)
+        }
+        CATransaction.commit()
+        if hovered != shownHighlight {
+            shownHighlight = hovered
+            showHighlight(hovered.flatMap { id in frame.constellations.first { $0.id == id } }?.segments, night: night)
+        }
+        reposition(animated: false)
+    }
+
+    /// Screen point (top-left origin) to container coordinates (bottom-left origin).
+    private func flip(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x, y: screen.height - p.y) }
+
+    private func buildTwinkle(frame: SkyFrame, twinkle: Bool, night: Bool) {
+        twinkleLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        guard twinkle else { return }
+        let ink = NSColor(SkyPainter.ink(night: night)).cgColor
+        let now = CACurrentMediaTime()
+        for (i, star) in frame.stars.enumerated() where star.mag < 2.6 {
+            let r = SkyPainter.brightRadius(star.mag)
+            let dot = CALayer()
+            dot.bounds = CGRect(x: 0, y: 0, width: r * 2, height: r * 2)
+            dot.cornerRadius = r
+            dot.position = flip(star.p)
+            dot.backgroundColor = night ? NSColor(star.color).cgColor : ink.copy(alpha: 0.55)
+            let base = Float(star.fade)
+            dot.opacity = base
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = base
+            pulse.toValue = base * 0.62
+            pulse.duration = 1.4 + Double((i * 37) % 19) / 10
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.beginTime = now - Double((i * 53) % 31) / 10
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            dot.add(pulse, forKey: "twinkle")
+            twinkleLayer.addSublayer(dot)
+        }
+    }
+
+    private func showHighlight(_ segments: [(CGPoint, CGPoint)]?, night: Bool) {
+        let ink = night ? NSColor(red: 0.8, green: 0.88, blue: 1, alpha: 1) : NSColor(red: 0.18, green: 0.3, blue: 0.6, alpha: 1)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.28)
+        if let segments {
+            CATransaction.setDisableActions(true)
+            let lines = CGMutablePath()
+            for (a, b) in segments { lines.move(to: flip(a)); lines.addLine(to: flip(b)) }
+            let dots = CGMutablePath()
+            for p in SkyPainter.vertices(segments) {
+                let q = flip(p)
+                dots.addEllipse(in: CGRect(x: q.x - 1.8, y: q.y - 1.8, width: 3.6, height: 3.6))
+            }
+            highlightLines.path = lines
+            highlightDots.path = dots
+            highlightLines.strokeColor = ink.withAlphaComponent(0.9).cgColor
+            highlightLines.shadowColor = ink.cgColor
+            highlightDots.shadowColor = ink.cgColor
+            CATransaction.setDisableActions(false)
+        }
+        let target: Float = segments == nil ? 0 : 1
+        for shape in [highlightLines, highlightDots] {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = shape.presentation()?.opacity ?? shape.opacity
+            fade.toValue = target
+            fade.duration = 0.28
+            shape.add(fade, forKey: "fade")
+            shape.opacity = target
+        }
+        CATransaction.commit()
+    }
+
+    // MARK: Following the window
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
+        guard let window else { stopFollowing(); return }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: NSWindow.willMoveNotification, object: window, queue: .main) { [weak self] _ in
+            self?.startFollowing()
+        })
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didChangeScreenNotification] {
+            observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                self?.reposition(animated: false)
+            })
+        }
+        reposition(animated: false)
+    }
+
+    override func layout() {
+        super.layout()
+        reposition(animated: false)
+    }
+
+    /// While the window is dragged, follow it on every display refresh.
+    private func startFollowing() {
+        quietTicks = 0
+        guard link == nil else { return }
+        let link = displayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    private func stopFollowing() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick() {
+        reposition(animated: false)
+        quietTicks = NSEvent.pressedMouseButtons == 0 ? quietTicks + 1 : 0
+        if quietTicks > 20 { stopFollowing() }
+    }
+
+    private func reposition(animated: Bool) {
+        guard let window, let screenFrame = (window.screen ?? NSScreen.main)?.frame else { return }
+        if screenFrame.size != screen { onScreenChange?(screenFrame.size) }
+        let rect = window.convertToScreen(convert(bounds, to: nil))
+        origin = CGPoint(x: rect.minX - screenFrame.minX, y: screenFrame.maxY - rect.maxY)
+        if role == .panel { MainActor.assumeIsolated { SkyModel.shared.panelOrigin = origin } }
+        CATransaction.begin()
+        if animated {
+            CATransaction.setAnimationDuration(0.45)
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        } else {
+            CATransaction.setDisableActions(true)
+        }
+        container.position = CGPoint(x: -origin.x + parallax.width,
+                                     y: bounds.height - screen.height + origin.y - parallax.height)
+        CATransaction.commit()
+    }
+
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        link?.invalidate()
     }
 }
 
@@ -529,6 +758,22 @@ final class SkyModel: ObservableObject {
     private var frameKey: String?
 
     /// The sky for this minute, place and size; reused until one of them changes, so hovering stays cheap.
+    static let imageScale: CGFloat = 2
+    private var imageKey: String?
+    private var cachedImage: CGImage?
+    var frameKeyValue: String { frameKey ?? "" }
+
+    /// The screen's sky painted once for this minute and these settings.
+    func image(frame: SkyFrame, screen: CGSize, night: Bool, lines: Bool, dim: Bool, brightCores: Bool) -> CGImage? {
+        let scale = NSScreen.main?.backingScaleFactor ?? SkyModel.imageScale
+        let key = "\(frameKey ?? "")|\(night)|\(lines)|\(dim)|\(brightCores)|\(scale)"
+        if key == imageKey, let cachedImage { return cachedImage }
+        cachedImage = SkyPainter.image(frame: frame, screen: screen, night: night, lines: lines, dim: dim,
+                                       brightCores: brightCores, scale: scale)
+        imageKey = key
+        return cachedImage
+    }
+
     func frame(date: Date, latitude: Double, longitude: Double, size: CGSize) -> SkyFrame {
         let key = "\(Int(date.timeIntervalSince1970 / 60))|\(latitude)|\(longitude)|\(Int(size.width))x\(Int(size.height))"
         if key == frameKey, let frame { return frame }
@@ -646,7 +891,7 @@ struct StargazeOverlay: View {
 final class Parallax: ObservableObject {
     static let shared = Parallax()
     /// How far the sky layer extends past the panel on each side, so drifting never shows an edge.
-    static let bleed: CGFloat = 14
+    static let bleed: CGFloat = 0
     static let reach: CGFloat = 5
 
     @Published private(set) var offset: CGSize = .zero
@@ -664,17 +909,10 @@ final class Parallax: ObservableObject {
     }
 }
 
-/// The background layer with parallax applied.
+/// The panel's background. Parallax is applied inside the sky layer itself, which is larger than the panel
+/// (it spans the screen), so drifting never shows an edge.
 struct ParallaxSky: View {
-    @ObservedObject private var parallax = Parallax.shared
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        SpaceBackground()
-            .padding(-Parallax.bleed)
-            .offset(reduceMotion ? .zero : parallax.offset)
-            .animation(.interpolatingSpring(stiffness: 40, damping: 12), value: parallax.offset)
-    }
+    var body: some View { SpaceBackground() }
 }
 
 // MARK: - Where a window sits on its screen

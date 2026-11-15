@@ -359,51 +359,70 @@ struct Identicon: View {
 /// A small glass tooltip that appears after a short hover. `.below` for header buttons, `.left` for row
 /// actions (which sit inside clipped cards).
 struct GlassTooltip: ViewModifier {
+    /// Kept for call sites; tooltips always sit centred just below their icon now.
     enum Placement { case below, above }
     let text: String
     var placement: Placement = .below
     @State private var hovering = false
-    @State private var shown = false
+    @State private var anchor: CGRect = .zero
 
     func body(content: Content) -> some View {
         content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(TooltipLayer.space)) } action: { anchor = $0 }
             .onHover { inside in
                 hovering = inside
                 if inside {
                     Task {
                         try? await Task.sleep(nanoseconds: 450_000_000)
-                        if hovering { withAnimation(.easeOut(duration: 0.18)) { shown = true } }
+                        if hovering { TooltipCenter.shared.show(text, below: anchor) }
                     }
                 } else {
-                    withAnimation(.easeOut(duration: 0.12)) { shown = false }
-                }
-            }
-            .overlay(alignment: .bottom) {
-                if shown && placement == .below {
-                    bubble.alignmentGuide(.bottom) { d in d[.top] - 6 }
-                }
-            }
-            .overlay(alignment: .top) {
-                if shown && placement == .above {
-                    bubble.alignmentGuide(.top) { d in d[.bottom] + 6 }
+                    TooltipCenter.shared.hide(text)
                 }
             }
     }
+}
 
-    private var bubble: some View {
-        Text(text)
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(Theme.text)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 9)
-            .frame(height: 24)
-            .background(Capsule().fill(Theme.glassFallback))
-            .overlay(Capsule().stroke(Theme.hairlineStrong))
-            .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
-            .transition(.opacity)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+/// The one tooltip on screen, drawn by `TooltipLayer` above everything else in the panel.
+@MainActor
+final class TooltipCenter: ObservableObject {
+    static let shared = TooltipCenter()
+    struct Tip: Equatable { let text: String; let anchor: CGRect }
+    @Published private(set) var tip: Tip?
+
+    func show(_ text: String, below anchor: CGRect) { tip = Tip(text: text, anchor: anchor) }
+    func hide(_ text: String) { if tip?.text == text { tip = nil } }
+}
+
+/// Covers the panel; draws the current tooltip centred under its icon, nudged inside the panel's edges.
+struct TooltipLayer: View {
+    static let space = "tooltip-root"
+    @ObservedObject private var center = TooltipCenter.shared
+    @State private var width: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            if let tip = center.tip {
+                Text(tip.text)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(Capsule().fill(Theme.glassFallback))
+                    .overlay(Capsule().stroke(Theme.hairlineStrong))
+                    .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                    .position(x: min(max(tip.anchor.midX, width / 2 + 8), geo.size.width - width / 2 - 8),
+                              y: tip.anchor.maxY + 6 + 12)
+                    .transition(.opacity)
+                    .id(tip.text)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .animation(.easeOut(duration: 0.15), value: center.tip)
     }
 }
 
