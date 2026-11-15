@@ -1038,7 +1038,6 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            MoonPhaseView(size: 34)
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.text)
