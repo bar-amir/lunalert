@@ -9,7 +9,8 @@ struct SkyCatalog {
     struct Star { let ra: Double; let dec: Double; let mag: Double; let bv: Double }
 
     let stars: [Star]
-    let lines: [[[Double]]]
+    /// Constellation abbreviation (IAU) → polylines of [raDeg, decDeg].
+    let lines: [(id: String, polylines: [[[Double]]])]
 
     static let shared: SkyCatalog = {
         struct File: Decodable { let stars: [[Double]]; let lines: [String: [[[Double]]]] }
@@ -18,7 +19,7 @@ struct SkyCatalog {
               let file = try? JSONDecoder().decode(File.self, from: data)
         else { return SkyCatalog(stars: [], lines: []) }
         return SkyCatalog(stars: file.stars.map { Star(ra: $0[0], dec: $0[1], mag: $0[2], bv: $0[3]) },
-                          lines: file.lines.values.flatMap { $0 })
+                          lines: file.lines.map { (id: $0.key, polylines: $0.value) })
     }()
 }
 
@@ -211,6 +212,8 @@ struct SkyFrame {
     struct Point { let p: CGPoint; let mag: Double; let color: Color; let fade: Double }
     let stars: [Point]
     let segments: [(CGPoint, CGPoint)]
+    /// The same segments, kept per constellation for hovering in stargaze mode.
+    let constellations: [(id: String, segments: [(CGPoint, CGPoint)])]
     let horizon: [CGPoint]
     let moon: (p: CGPoint, illuminated: Double, waxing: Bool, sunAngle: Double)?
     let sunAlt: Double
@@ -233,12 +236,17 @@ struct SkyFrame {
             // Stars dim toward the horizon, as through thicker air, so the sky ends softly with no edge.
             return Point(p: p, mag: s.mag, color: starColor(bv: s.bv), fade: max(0, min(1, (alt + 2) / 14)))
         }
-        var segments: [(CGPoint, CGPoint)] = []
-        for line in catalog.lines {
-            for pair in zip(line, line.dropFirst()) {
-                if let a = place(pair.0[0], pair.0[1]), let b = place(pair.1[0], pair.1[1]) { segments.append((a.0, b.0)) }
+        var constellations: [(id: String, segments: [(CGPoint, CGPoint)])] = []
+        for constellation in catalog.lines {
+            var segs: [(CGPoint, CGPoint)] = []
+            for line in constellation.polylines {
+                for pair in zip(line, line.dropFirst()) {
+                    if let a = place(pair.0[0], pair.0[1]), let b = place(pair.1[0], pair.1[1]) { segs.append((a.0, b.0)) }
+                }
             }
+            if !segs.isEmpty { constellations.append((constellation.id, segs)) }
         }
+        let segments = constellations.flatMap(\.segments)
         let horizon = stride(from: projection.centerAz - 120, through: projection.centerAz + 120, by: 3)
             .compactMap { projection.point(alt: 0, az: $0) }
         let sun = Astronomy.sun(date)
@@ -257,7 +265,7 @@ struct SkyFrame {
                 guard let p = projection.point(alt: 0, az: az), p.x > 12, p.x < size.width - 12 else { return nil }
                 return (label, p)
             }
-        return SkyFrame(stars: stars, segments: segments, horizon: horizon, moon: moonInfo, sunAlt: sunH.alt, cardinal: cardinal)
+        return SkyFrame(stars: stars, segments: segments, constellations: constellations, horizon: horizon, moon: moonInfo, sunAlt: sunH.alt, cardinal: cardinal)
     }
 
     /// Star colour from its B-V colour index: blue-white for hot stars, amber for cool ones.
@@ -282,15 +290,22 @@ struct RealSky: View {
     @Environment(\.frozenTime) private var frozenTime
     @AppStorage("animatedSky") private var animatedSky = true
     @AppStorage("constellationLines") private var constellationLines = true
+    @ObservedObject private var model = SkyModel.shared
 
     var body: some View {
         GeometryReader { geo in
             TimelineView(.everyMinute) { minute in
                 let date = fixedDate ?? minute.date
-                let frame = SkyFrame.make(date: date, latitude: location.latitude, longitude: location.longitude, size: geo.size)
+                let frame = model.remember(SkyFrame.make(date: date, latitude: location.latitude,
+                                                         longitude: location.longitude, size: geo.size))
                 ZStack {
                     twilight(frame.sunAlt)
                     Canvas { ctx, _ in drawStatic(frame, in: &ctx) }
+                    if let id = model.hovered, let constellation = frame.constellations.first(where: { $0.id == id }) {
+                        Canvas { ctx, _ in drawHighlight(constellation.segments, in: &ctx) }
+                            .id(id)
+                            .transition(.opacity)
+                    }
                     if reduceMotion || !animatedSky || frozenTime != nil {
                         Canvas { ctx, _ in drawBright(frame, time: frozenTime ?? 0, in: &ctx) }
                     } else {
@@ -299,12 +314,31 @@ struct RealSky: View {
                         }
                     }
                 }
+                .animation(.easeOut(duration: 0.3), value: model.hovered)
             }
         }
         .accessibilityHidden(true)
     }
 
     private var night: Bool { scheme == .dark }
+
+    /// The hovered constellation: its lines lit and its stars brightened, with a soft glow.
+    private func drawHighlight(_ segments: [(CGPoint, CGPoint)], in ctx: inout GraphicsContext) {
+        let ink: Color = night ? Color(red: 0.8, green: 0.88, blue: 1) : Color(red: 0.18, green: 0.3, blue: 0.6)
+        var path = Path()
+        for (a, b) in segments { path.move(to: a); path.addLine(to: b) }
+        var glow = ctx
+        glow.addFilter(.blur(radius: 4))
+        glow.stroke(path, with: .color(ink.opacity(0.5)), lineWidth: 2.5)
+        ctx.stroke(path, with: .color(ink.opacity(0.85)), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+        var seen = Set<String>()
+        for point in segments.flatMap({ [$0.0, $0.1] }) where seen.insert("\(Int(point.x)):\(Int(point.y))").inserted {
+            var halo = ctx
+            halo.addFilter(.blur(radius: 3))
+            halo.fill(Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)), with: .color(ink.opacity(0.6)))
+            ctx.fill(Path(ellipseIn: CGRect(x: point.x - 1.8, y: point.y - 1.8, width: 3.6, height: 3.6)), with: .color(.white))
+        }
+    }
 
     /// A faint glow on the horizon that follows the real Sun: blue twilight, deeper after dusk.
     @ViewBuilder
@@ -442,5 +476,126 @@ struct MoonDisc: View {
             lit.fill(terminator, with: .color(illuminated >= 0.5 ? light : dark))
             ctx.stroke(disc, with: .color(.white.opacity(0.25)), lineWidth: 0.75)
         }
+    }
+}
+
+// MARK: - Stargaze mode
+
+/// Stargaze mode: the UI steps aside and constellations can be explored by pointing at them.
+@MainActor
+final class SkyModel: ObservableObject {
+    static let shared = SkyModel()
+
+    @Published var stargazing = false
+    @Published var hovered: String?
+    /// The sky as last drawn, for hit-testing the pointer.
+    private(set) var frame: SkyFrame?
+
+    func remember(_ frame: SkyFrame) -> SkyFrame {
+        self.frame = frame
+        return frame
+    }
+
+    /// The constellation whose lines pass closest to the point, if any are within reach.
+    func constellation(at point: CGPoint, reach: CGFloat = 22) -> String? {
+        guard let frame else { return nil }
+        var best: (id: String, distance: CGFloat)?
+        for constellation in frame.constellations {
+            for (a, b) in constellation.segments {
+                let d = SkyModel.distance(point, a, b)
+                if d < reach, d < (best?.distance ?? .infinity) { best = (constellation.id, d) }
+            }
+        }
+        return best?.id
+    }
+
+    private static func distance(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let length = dx * dx + dy * dy
+        let t = length == 0 ? 0 : max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
+
+    func leave() {
+        hovered = nil
+        stargazing = false
+    }
+}
+
+/// The 88 constellations by their IAU abbreviations.
+enum ConstellationNames {
+    static let all: [String: String] = [
+        "And": "Andromeda", "Ant": "Antlia", "Aps": "Apus", "Aqr": "Aquarius", "Aql": "Aquila", "Ara": "Ara",
+        "Ari": "Aries", "Aur": "Auriga", "Boo": "Boötes", "Cae": "Caelum", "Cam": "Camelopardalis", "Cnc": "Cancer",
+        "CVn": "Canes Venatici", "CMa": "Canis Major", "CMi": "Canis Minor", "Cap": "Capricornus", "Car": "Carina",
+        "Cas": "Cassiopeia", "Cen": "Centaurus", "Cep": "Cepheus", "Cet": "Cetus", "Cha": "Chamaeleon", "Cir": "Circinus",
+        "Col": "Columba", "Com": "Coma Berenices", "CrA": "Corona Australis", "CrB": "Corona Borealis", "Crv": "Corvus",
+        "Crt": "Crater", "Cru": "Crux", "Cyg": "Cygnus", "Del": "Delphinus", "Dor": "Dorado", "Dra": "Draco",
+        "Equ": "Equuleus", "Eri": "Eridanus", "For": "Fornax", "Gem": "Gemini", "Gru": "Grus", "Her": "Hercules",
+        "Hor": "Horologium", "Hya": "Hydra", "Hyi": "Hydrus", "Ind": "Indus", "Lac": "Lacerta", "Leo": "Leo",
+        "LMi": "Leo Minor", "Lep": "Lepus", "Lib": "Libra", "Lup": "Lupus", "Lyn": "Lynx", "Lyr": "Lyra",
+        "Men": "Mensa", "Mic": "Microscopium", "Mon": "Monoceros", "Mus": "Musca", "Nor": "Norma", "Oct": "Octans",
+        "Oph": "Ophiuchus", "Ori": "Orion", "Pav": "Pavo", "Peg": "Pegasus", "Per": "Perseus", "Phe": "Phoenix",
+        "Pic": "Pictor", "Psc": "Pisces", "PsA": "Piscis Austrinus", "Pup": "Puppis", "Pyx": "Pyxis",
+        "Ret": "Reticulum", "Sge": "Sagitta", "Sgr": "Sagittarius", "Sco": "Scorpius", "Scl": "Sculptor",
+        "Sct": "Scutum", "Ser": "Serpens", "Sex": "Sextans", "Tau": "Taurus", "Tel": "Telescopium",
+        "Tri": "Triangulum", "TrA": "Triangulum Australe", "Tuc": "Tucana", "UMa": "Ursa Major",
+        "UMi": "Ursa Minor", "Vel": "Vela", "Vir": "Virgo", "Vol": "Volans", "Vul": "Vulpecula",
+    ]
+}
+
+/// Covers the panel while stargazing: points at constellations, shows the name, and returns on a click.
+struct StargazeOverlay: View {
+    @ObservedObject private var sky = SkyModel.shared
+    @State private var hintVisible = true
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case let .active(point):
+                    let id = sky.constellation(at: point)
+                    if id != sky.hovered { sky.hovered = id }
+                case .ended:
+                    sky.hovered = nil
+                }
+            }
+            .onTapGesture { withAnimation(.easeInOut(duration: 0.45)) { sky.leave() } }
+            .overlay(alignment: .topLeading) {
+                if let id = sky.hovered, let name = ConstellationNames.all[id] {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name)
+                            .font(.system(size: 24, weight: .semibold, design: .serif))
+                            .foregroundStyle(Theme.starlight)
+                        Text(id.uppercased())
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .tracking(2)
+                            .foregroundStyle(Theme.secondaryText)
+                    }
+                    .padding(.top, 20)
+                    .padding(.leading, Spacing.gutter + 4)
+                    .id(id)
+                    .transition(.opacity.combined(with: .offset(y: 4)))
+                    .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                Text("Point at a constellation · click anywhere to return")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.secondaryText)
+                    .padding(.bottom, 18)
+                    .opacity(hintVisible ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .animation(.easeOut(duration: 0.3), value: sky.hovered)
+            .task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                withAnimation(.easeOut(duration: 0.8)) { hintVisible = false }
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Stargazing. Click to return.")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { sky.leave() }
     }
 }

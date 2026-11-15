@@ -12,6 +12,7 @@ struct MenuContentView: View {
     @Namespace private var tabs
     @Environment(\.colorScheme) private var systemScheme
     @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .night
+    @ObservedObject private var sky = SkyModel.shared
 
     private var inList: Bool { store.hasToken && store.problem != .badToken }
 
@@ -44,7 +45,14 @@ struct MenuContentView: View {
                 footer.padding(.horizontal, Spacing.gutter).padding(.bottom, 12)
             }
         }
+        // Stargazing: the UI steps aside but keeps its space, so the sky stays exactly where it was.
+        .opacity(sky.stargazing ? 0 : 1)
+        .blur(radius: sky.stargazing && !reduceMotion ? 6 : 0)
+        .allowsHitTesting(!sky.stargazing)
         .frame(width: panelWidth)
+        .overlay {
+            if sky.stargazing { StargazeOverlay().transition(.opacity) }
+        }
         .background(SpaceBackground())
         .environment(\.colorScheme, panelAppearance == .night ? .dark : systemScheme)
         .focusable()
@@ -58,11 +66,12 @@ struct MenuContentView: View {
         .onKeyPress(.downArrow) { withAnimation(.snappy(duration: 0.18)) { store.moveSelection(by: 1) }; return .handled }
         .onKeyPress(.return) { openSelection(); return .handled }
         .onKeyPress(.escape) {
+            if sky.stargazing { withAnimation(.easeInOut(duration: 0.45)) { sky.leave() }; return .handled }
             if !store.search.isEmpty { store.search = ""; return .handled }
             return .ignored
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "emEM/")) { press in
-            guard !searchFocused else { return .ignored }
+            guard !searchFocused, !sky.stargazing else { return .ignored }
             switch press.characters.lowercased() {
             case "e": if let item = store.selectedItem { store.requestExit(.done, [item], animated: !reduceMotion) }
             case "m": if let item = store.selectedItem { store.requestExit(.mute, [item], animated: !reduceMotion) }
@@ -94,6 +103,12 @@ struct MenuContentView: View {
                     .contentTransition(.opacity)
             }
             Spacer()
+            Button { withAnimation(.easeInOut(duration: reduceMotion ? 0.2 : 0.55)) { sky.stargazing = true } } label: {
+                Image(systemName: "moon.stars")
+            }
+            .buttonStyle(IconButtonStyle())
+            .help("Stargaze: hide everything and look at the sky")
+            .accessibilityLabel("Stargaze")
             if store.hasToken {
                 Button { store.refreshNow() } label: {
                     Image(systemName: "arrow.clockwise")

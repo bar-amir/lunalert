@@ -77,6 +77,25 @@ enum Snapshot {
         }
         store.ciFilter = .all
 
+        // Stargaze: render once so the sky is laid out, then point at the constellation nearest the middle.
+        f.applyNormal(store)
+        store.selectedTab = .all
+        SkyModel.shared.stargazing = true
+        let probe = folder.appendingPathComponent(".probe.png")
+        render(MenuContentView().environmentObject(store).environment(\.snapshotMode, true)
+                   .environment(\.frozenTime, 12).environment(\.skyDate, Snapshot.skyDate), dark: true, to: probe)
+        try? FileManager.default.removeItem(at: probe)
+        if let frame = SkyModel.shared.frame {
+            let center = CGPoint(x: panelWidth / 2, y: 260)
+            SkyModel.shared.hovered = frame.constellations.min { a, b in
+                let da = a.segments.map { hypot($0.0.x - center.x, $0.0.y - center.y) }.min() ?? .infinity
+                let db = b.segments.map { hypot($0.0.x - center.x, $0.0.y - center.y) }.min() ?? .infinity
+                return da < db
+            }?.id
+        }
+        menu("18-stargaze") { }
+        SkyModel.shared.leave()
+
         f.applyNormal(store)
         for dark in [false, true] {
             render(SettingsView().environmentObject(store).environment(\.snapshotMode, true), dark: dark,
