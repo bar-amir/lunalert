@@ -208,7 +208,7 @@ struct SkyProjection {
 
 /// Everything placed for one minute: recomputed only when the minute, place or size changes.
 struct SkyFrame {
-    struct Point { let p: CGPoint; let mag: Double; let color: Color }
+    struct Point { let p: CGPoint; let mag: Double; let color: Color; let fade: Double }
     let stars: [Point]
     let segments: [(CGPoint, CGPoint)]
     let horizon: [CGPoint]
@@ -229,8 +229,9 @@ struct SkyFrame {
 
         let catalog = SkyCatalog.shared
         let stars = catalog.stars.compactMap { s -> Point? in
-            guard let (p, _) = place(s.ra, s.dec) else { return nil }
-            return Point(p: p, mag: s.mag, color: starColor(bv: s.bv))
+            guard let (p, alt) = place(s.ra, s.dec) else { return nil }
+            // Stars dim toward the horizon, as through thicker air, so the sky ends softly with no edge.
+            return Point(p: p, mag: s.mag, color: starColor(bv: s.bv), fade: max(0, min(1, (alt + 2) / 14)))
         }
         var segments: [(CGPoint, CGPoint)] = []
         for line in catalog.lines {
@@ -320,28 +321,11 @@ struct RealSky: View {
             for (a, b) in frame.segments { path.move(to: a); path.addLine(to: b) }
             ctx.stroke(path, with: .color(ink.opacity(night ? 0.065 : 0.10)), lineWidth: 0.6)
         }
-        // Ground below the horizon, so the sky reads as a sky.
-        if let first = frame.horizon.first, let last = frame.horizon.last {
-            var ground = Path()
-            ground.move(to: CGPoint(x: first.x, y: first.y))
-            for p in frame.horizon { ground.addLine(to: p) }
-            ground.addLine(to: CGPoint(x: last.x, y: 4000))
-            ground.addLine(to: CGPoint(x: first.x, y: 4000))
-            ground.closeSubpath()
-            ctx.fill(ground, with: .color((night ? Color.black : Color(red: 0.86, green: 0.9, blue: 0.96)).opacity(night ? 0.45 : 0.6)))
-            var line = Path()
-            line.addLines(frame.horizon)
-            ctx.stroke(line, with: .color(ink.opacity(0.14)), lineWidth: 0.75)
-        }
-        for (label, p) in frame.cardinal {
-            ctx.draw(Text(label).font(.system(size: 9, weight: .semibold)).foregroundColor(ink.opacity(0.35)),
-                     at: CGPoint(x: p.x, y: p.y + 9))
-        }
         for star in frame.stars where star.mag >= 2.6 {
             let r = max(0.45, 1.95 - 0.28 * star.mag)
             let opacity = max(0.18, min(0.95, 1.15 - 0.14 * star.mag))
             ctx.fill(Path(ellipseIn: CGRect(x: star.p.x - r, y: star.p.y - r, width: r * 2, height: r * 2)),
-                     with: .color(night ? star.color.opacity(opacity) : ink.opacity(opacity * 0.5)))
+                     with: .color(night ? star.color.opacity(opacity * star.fade) : ink.opacity(opacity * 0.5 * star.fade)))
         }
         if let moon = frame.moon { drawMoon(moon, in: &ctx) }
     }
@@ -350,7 +334,7 @@ struct RealSky: View {
     private func drawBright(_ frame: SkyFrame, time: TimeInterval, in ctx: inout GraphicsContext) {
         let ink: Color = night ? .white : Color(red: 0.25, green: 0.33, blue: 0.5)
         for (i, star) in frame.stars.enumerated() where star.mag < 2.6 {
-            let twinkle = 0.82 + 0.18 * sin(time * 1.7 + Double(i) * 1.37)
+            let twinkle = (0.82 + 0.18 * sin(time * 1.7 + Double(i) * 1.37)) * star.fade
             let r = max(1.0, 2.2 - 0.32 * star.mag)
             if night {
                 var glow = ctx
