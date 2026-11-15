@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// `Belfry --snapshot <folder>` renders every screen and state to 2x PNGs, in light and dark, from fixture
+/// `Lunalert --snapshot <folder>` renders every screen and state to 2x PNGs, in light and dark, from fixture
 /// data with fictional repositories. Used for design review and audits; never touches GitHub.
 @MainActor
 enum Snapshot {
     /// A fixed evening for reproducible skies: 2026-11-12 20:00 UTC.
-    static let skyDate: Date = ProcessInfo.processInfo.environment["BELFRY_SKY_DATE"]
+    static let skyDate: Date = ProcessInfo.processInfo.environment["LUNALERT_SKY_DATE"]
         .flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date(timeIntervalSince1970: 1_794_513_600)
 
     static func renderAll(to folder: URL) {
@@ -98,11 +98,10 @@ enum Snapshot {
 
         f.applyNormal(store)
         for dark in [false, true] {
-            render(SettingsView().environmentObject(store).environment(\.snapshotMode, true), dark: dark,
-                   to: folder.appendingPathComponent("20-settings-\(dark ? "dark" : "light").png"))
-            for (name, count, err) in [("idle", 0, false), ("count", 12, false), ("error", 0, true)] {
-                render(MenuBarLabel(count: count, hasError: err).padding(6),
-                       dark: dark, to: folder.appendingPathComponent("30-menubar-\(name)-\(dark ? "dark" : "light").png"))
+            for tab in SettingsTab.allCases {
+                render(SettingsView(tab: tab).environmentObject(store).environment(\.snapshotMode, true)
+                           .environment(\.skyDate, Snapshot.skyDate).environment(\.frozenTime, 12),
+                       dark: dark, to: folder.appendingPathComponent("20-settings-\(tab.rawValue)-\(dark ? "dark" : "light").png"))
             }
         }
         print("Wrote snapshots to \(folder.path)")
@@ -228,7 +227,7 @@ struct Fixtures {
 
 // MARK: - Action animation frames
 
-/// `Belfry --animations <folder>` renders each action animation frame by frame (30 fps) from fixtures, so the
+/// `Lunalert --animations <folder>` renders each action animation frame by frame (30 fps) from fixtures, so the
 /// micro-interactions can be reviewed as video. Each clip goes to its own subfolder as 000.png, 001.png, …
 @MainActor
 enum AnimationFrames {

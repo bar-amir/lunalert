@@ -1,6 +1,6 @@
 # Feature research
 
-How Belfry compares with other GitHub notification clients, and what to build next. Researched 2026-11-12 from each project's own pages (sources at the end).
+How Lunalert compares with other GitHub notification clients, and what to build next. Researched 2026-11-12 from each project's own pages (sources at the end).
 
 ## Built in 0.2
 

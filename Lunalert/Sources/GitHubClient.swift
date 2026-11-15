@@ -98,7 +98,7 @@ enum GitHubError: LocalizedError {
         switch self {
         case .missingToken: return "Add a GitHub token to start."
         case .unauthorized: return "Your GitHub token doesn't work anymore. It may have expired or been revoked."
-        case let .http(code, _) where code >= 500: return "GitHub is having trouble right now. Belfry will keep trying."
+        case let .http(code, _) where code >= 500: return "GitHub is having trouble right now. Lunalert will keep trying."
         case .http(403, _): return "GitHub refused the request. The token may be missing the notifications scope."
         case let .http(code, _): return "GitHub answered with an unexpected error (\(code))."
         }
@@ -150,7 +150,7 @@ final class GitHubClient {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        req.setValue("Belfry/0.1", forHTTPHeaderField: "User-Agent")
+        req.setValue("Lunalert/0.1", forHTTPHeaderField: "User-Agent")
         return req
     }
 
@@ -404,7 +404,7 @@ final class GitHubClient {
             } catch {
                 attempt += 1
                 if attempt > 3 { throw error }
-                NSLog("Belfry: GET \(url.path) failed (\(error)), retry \(attempt)")
+                NSLog("Lunalert: GET \(url.path) failed (\(error)), retry \(attempt)")
                 try await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
             }
         }

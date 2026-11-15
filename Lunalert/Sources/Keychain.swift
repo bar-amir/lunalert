@@ -3,10 +3,10 @@ import Security
 
 /// Stores the GitHub token as a generic password in the login Keychain.
 enum Keychain {
-    private static let service = "io.github.baramir.belfry"
+    static let service = "io.github.baramir.lunalert"
     private static let account = "github-token"
 
-    static func readToken() -> String? {
+    static func readToken(service: String = Keychain.service) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -32,7 +32,7 @@ enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrLabel as String: "Belfry GitHub token",
+            kSecAttrLabel as String: "Lunalert GitHub token",
             kSecValueData as String: Data(trimmed.utf8),
         ]
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess

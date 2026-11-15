@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     static let threadKey = "threadId"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        LegacyMigration.run()
         if CommandLine.arguments.contains("--sky-check") {
             Self.skyCheck()
             exit(0)
@@ -26,17 +27,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         center.delegate = self
         // Permission is requested after the first successful check, when there is something to announce.
         Task { @MainActor in NotificationStore.shared.refreshBannerPermission() }
-        // Pick up changes made in System Settings while Belfry runs.
+        // Pick up changes made in System Settings while Lunalert runs.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                                object: nil, queue: .main) { _ in
             Task { @MainActor in NotificationStore.shared.refreshBannerPermission() }
         }
         Task { @MainActor in
             NotificationStore.shared.start()
+            StatusItemController.shared.install()
         }
     }
 
-    /// `Belfry --sky-check`: prints positions for sanity checks against known sky facts.
+    /// `Lunalert --sky-check`: prints positions for sanity checks against known sky facts.
     @MainActor private static func skyCheck() {
         let zone = SkyLocation.timeZoneCoordinate()
         print("Time zone location:", zone.name, String(format: "%.2f, %.2f", zone.lat, zone.lon))
@@ -70,9 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         print(String(format: "Moon at %@: illuminated %.2f, %@", iso.string(from: now), m.illuminated, m.waxing ? "waxing" : "waning"))
     }
 
-    /// `Belfry --dump`: prints what each unread row would say, then quits. Handy for debugging without the UI.
+    /// `Lunalert --dump`: prints what each unread row would say, then quits. Handy for debugging without the UI.
     private static func dumpAndExit() async {
-        guard let token = Keychain.readToken() ?? ProcessInfo.processInfo.environment["BELFRY_GITHUB_TOKEN"] else {
+        guard let token = Keychain.readToken() ?? ProcessInfo.processInfo.environment["LUNALERT_GITHUB_TOKEN"] else {
             print("No token"); exit(1)
         }
         let client = GitHubClient(token: token)

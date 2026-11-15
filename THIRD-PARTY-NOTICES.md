@@ -2,7 +2,7 @@
 
 ## Star catalog and constellation lines
 
-`Belfry/Resources/sky.json` is trimmed from the `stars.6.json` and `constellations.lines.json` files of
+`Lunalert/Resources/sky.json` is trimmed from the `stars.6.json` and `constellations.lines.json` files of
 [d3-celestial](https://github.com/ofrohn/d3-celestial) by Olaf Frohn (BSD-3-Clause), whose star data derive
 from the Yale Bright Star Catalog. The licence follows.
 

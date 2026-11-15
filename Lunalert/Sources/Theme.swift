@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Belfry's "starlight" look: a quiet night sky, one ice-blue accent, a moonlight-white primary action, and GitHub's
+/// Lunalert's "starlight" look: a quiet night sky, one ice-blue accent, a moonlight-white primary action, and GitHub's
 /// state colours muted so they inform rather than shout. The panel is always dark by design; every text colour
 /// clears 4.5:1 on `canvas`. Glass comes from macOS itself (Liquid Glass on macOS 26 and later).
 enum Theme {
@@ -154,10 +154,15 @@ extension View {
 
 /// The panel's backdrop: the real sky over you right now (see Sky.swift), on a deep night gradient.
 struct SpaceBackground: View {
+    @ObservedObject private var sky = SkyModel.shared
+
     var body: some View {
         ZStack {
             Theme.canvas
+            // The glow toward the bottom steps back in Stargaze, leaving more sky.
             LinearGradient(colors: [Theme.canvas, Theme.skyGlowA.opacity(0.5)], startPoint: .top, endPoint: .bottom)
+                .opacity(sky.stargazing ? 0 : 1)
+                .animation(.easeInOut(duration: 0.6), value: sky.stargazing)
             RealSky()
         }
         .accessibilityHidden(true)
@@ -352,5 +357,64 @@ struct Identicon: View {
         .clipShape(Circle())
         .overlay(Circle().stroke(color.opacity(0.4), lineWidth: 0.75))
         .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Tooltips
+
+/// A small glass tooltip that appears after a short hover. `.below` for header buttons, `.left` for row
+/// actions (which sit inside clipped cards).
+struct GlassTooltip: ViewModifier {
+    enum Placement { case below, left }
+    let text: String
+    var placement: Placement = .below
+    @State private var hovering = false
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                hovering = inside
+                if inside {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 450_000_000)
+                        if hovering { withAnimation(.easeOut(duration: 0.18)) { shown = true } }
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.12)) { shown = false }
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if shown && placement == .below {
+                    bubble.alignmentGuide(.bottom) { d in d[.top] - 6 }
+                }
+            }
+            .overlay(alignment: .leading) {
+                if shown && placement == .left {
+                    bubble.alignmentGuide(.leading) { d in d[.trailing] + 6 }
+                }
+            }
+    }
+
+    private var bubble: some View {
+        Text(text)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(Theme.text)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(Capsule().fill(Theme.glassFallback))
+            .overlay(Capsule().stroke(Theme.hairlineStrong))
+            .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+            .transition(.opacity)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    func tooltip(_ text: String, _ placement: GlassTooltip.Placement = .below) -> some View {
+        modifier(GlassTooltip(text: text, placement: placement))
     }
 }

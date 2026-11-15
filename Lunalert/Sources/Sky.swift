@@ -296,10 +296,12 @@ struct RealSky: View {
         GeometryReader { geo in
             TimelineView(.everyMinute) { minute in
                 let date = fixedDate ?? minute.date
-                let frame = model.remember(SkyFrame.make(date: date, latitude: location.latitude,
-                                                         longitude: location.longitude, size: geo.size))
+                let frame = model.frame(date: date, latitude: location.latitude,
+                                        longitude: location.longitude, size: geo.size)
                 ZStack {
                     twilight(frame.sunAlt)
+                        .opacity(model.stargazing ? 0.25 : 1)
+                        .animation(.easeInOut(duration: 0.6), value: model.stargazing)
                     Canvas { ctx, _ in drawStatic(frame, in: &ctx) }
                     if let id = model.hovered, let constellation = frame.constellations.first(where: { $0.id == id }) {
                         Canvas { ctx, _ in drawHighlight(constellation.segments, in: &ctx) }
@@ -486,14 +488,24 @@ struct MoonDisc: View {
 final class SkyModel: ObservableObject {
     static let shared = SkyModel()
 
-    @Published var stargazing = false
+    /// Stargaze doubles as Do Not Disturb: while it's on, no banners are posted. It survives closing the
+    /// panel and quitting, and ends with a click on the sky or from the menu-bar item's right-click menu.
+    @Published var stargazing = UserDefaults.standard.bool(forKey: "stargazing") {
+        didSet { UserDefaults.standard.set(stargazing, forKey: "stargazing") }
+    }
     @Published var hovered: String?
     /// The sky as last drawn, for hit-testing the pointer.
     private(set) var frame: SkyFrame?
+    private var frameKey: String?
 
-    func remember(_ frame: SkyFrame) -> SkyFrame {
-        self.frame = frame
-        return frame
+    /// The sky for this minute, place and size; reused until one of them changes, so hovering stays cheap.
+    func frame(date: Date, latitude: Double, longitude: Double, size: CGSize) -> SkyFrame {
+        let key = "\(Int(date.timeIntervalSince1970 / 60))|\(latitude)|\(longitude)|\(Int(size.width))x\(Int(size.height))"
+        if key == frameKey, let frame { return frame }
+        let made = SkyFrame.make(date: date, latitude: latitude, longitude: longitude, size: size)
+        frame = made
+        frameKey = key
+        return made
     }
 
     /// The constellation whose lines pass closest to the point, if any are within reach.
@@ -555,7 +567,7 @@ struct StargazeOverlay: View {
             .onContinuousHover { phase in
                 switch phase {
                 case let .active(point):
-                    let id = sky.constellation(at: point)
+                    let id = sky.constellation(at: Parallax.shared.skyPoint(fromPanel: point))
                     if id != sky.hovered { sky.hovered = id }
                 case .ended:
                     sky.hovered = nil
@@ -581,7 +593,7 @@ struct StargazeOverlay: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                Text("Point at a constellation · click anywhere to return")
+                Text("Alerts are off · point at a constellation · click anywhere to return")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.secondaryText)
                     .padding(.bottom, 18)
@@ -594,8 +606,46 @@ struct StargazeOverlay: View {
                 withAnimation(.easeOut(duration: 0.8)) { hintVisible = false }
             }
             .accessibilityElement()
-            .accessibilityLabel("Stargazing. Click to return.")
+            .accessibilityLabel("Stargazing, alerts off. Click to return.")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { sky.leave() }
+    }
+}
+
+// MARK: - Parallax
+
+/// The sky drifts a few points against the pointer, as if seen through a window. Kept apart from SkyModel
+/// so pointer movement never redraws the stars, only moves them.
+@MainActor
+final class Parallax: ObservableObject {
+    static let shared = Parallax()
+    /// How far the sky layer extends past the panel on each side, so drifting never shows an edge.
+    static let bleed: CGFloat = 14
+    static let reach: CGFloat = 8
+
+    @Published private(set) var offset: CGSize = .zero
+
+    func track(_ point: CGPoint?, in size: CGSize) {
+        guard let point, size.width > 0, size.height > 0 else { offset = .zero; return }
+        let nx = (point.x / size.width - 0.5) * 2, ny = (point.y / size.height - 0.5) * 2
+        offset = CGSize(width: -nx * Parallax.reach, height: -ny * Parallax.reach * 0.6)
+    }
+
+    /// A point in the panel, in the sky layer's own coordinates.
+    func skyPoint(fromPanel p: CGPoint) -> CGPoint {
+        CGPoint(x: p.x + Parallax.bleed - offset.width, y: p.y + Parallax.bleed - offset.height)
+    }
+}
+
+/// The background layer with parallax applied.
+struct ParallaxSky: View {
+    @ObservedObject private var parallax = Parallax.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        SpaceBackground()
+            .padding(-Parallax.bleed)
+            .offset(reduceMotion ? .zero : parallax.offset)
+            .animation(.interpolatingSpring(stiffness: 40, damping: 12), value: parallax.offset)
     }
 }

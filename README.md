@@ -1,4 +1,4 @@
-# Belfry
+# Lunalert
 
 A small native macOS menu-bar app that rings when something happens on GitHub. It has a quiet night-sky look
 of its own: a faint starfield, one ice-blue accent, GitHub's state colours muted so they inform rather than shout,
@@ -9,7 +9,7 @@ south. Location comes from your Mac's time zone (no permission needed) or, if yo
 Services; it never leaves your Mac. A daylight variant that follows Light Mode is in Settings › Sky. All of it stays still
 when Reduce Motion is on.
 
-<p align="center"><img src="docs/media/inbox.png" width="420" alt="The Belfry inbox: repositories as cards, each row with a state icon, what happened, and labels"></p>
+<p align="center"><img src="docs/media/inbox.png" width="420" alt="The Lunalert inbox: repositories as cards, each row with a state icon, what happened, and labels"></p>
 
 <p align="center"><img src="docs/media/sky.png" width="420" alt="Inbox zero over the real evening sky, with the waxing gibbous Moon"></p>
 
@@ -25,9 +25,9 @@ when Reduce Motion is on.
   seconds so you can undo it (⌘Z).
 - **CI without the noise.** Runs collapse into one row per repo and branch. Choose all runs, failures only or
   none; the choice applies to the list, the count and the banners.
-- **Careful with your attention and data.** Belfry announces each piece of activity once, asks for notification
+- **Careful with your attention and data.** Lunalert announces each piece of activity once, asks for notification
   permission only after the first successful check, polls with `If-Modified-Since` and respects GitHub's
-  `X-Poll-Interval`. The token stays in the Keychain, and Belfry talks only to api.github.com.
+  `X-Poll-Interval`. The token stays in the Keychain, and Lunalert talks only to api.github.com.
 
 Requires macOS 14 or later. Written in Swift and SwiftUI with no third-party
 dependencies.
@@ -45,71 +45,71 @@ Or step by step:
 
 ```bash
 xcodegen generate
-xcodebuild -project Belfry.xcodeproj -scheme Belfry -configuration Release -derivedDataPath build build
-open build/Build/Products/Release/Belfry.app
+xcodebuild -project Lunalert.xcodeproj -scheme Lunalert -configuration Release -derivedDataPath build build
+open build/Build/Products/Release/Lunalert.app
 ```
 
-To install, copy `build/Build/Products/Release/Belfry.app` into
+To install, copy `build/Build/Products/Release/Lunalert.app` into
 `/Applications` (`make install`). Launch at login works best from there.
 
-On first launch macOS asks whether Belfry may send notifications. Choose
-**Allow**. Under System Settings → Notifications → Belfry, set the alert
+On first launch macOS asks whether Lunalert may send notifications. Choose
+**Allow**. Under System Settings → Notifications → Lunalert, set the alert
 style to **Banners** (or **Alerts** if you want them to stay until dismissed).
 
-If you clicked "Don't Allow", macOS drops every banner silently. Belfry shows
-an orange "macOS is blocking Belfry's banners" strip with a button that opens
+If you clicked "Don't Allow", macOS drops every banner silently. Lunalert shows
+an orange "macOS is blocking Lunalert's banners" strip with a button that opens
 the right settings page.
 
-On first launch with an empty history, Belfry only shows banners for activity
+On first launch with an empty history, Lunalert only shows banners for activity
 from the last 24 hours and quietly marks everything older as seen.
 
 ## Creating the token
 
-1. Open <https://github.com/settings/tokens/new?scopes=notifications,repo&description=Belfry>
+1. Open <https://github.com/settings/tokens/new?scopes=notifications,repo&description=Lunalert>
    (Settings → Developer settings → Personal access tokens → Tokens (classic)).
 2. Keep the `notifications` and `repo` scopes. `repo` is needed to resolve
    private pull requests and issues to their web URLs. Pick an expiry.
-3. Generate the token, open the Belfry menu, paste it and click **Connect**. Belfry checks it with GitHub
+3. Generate the token, open the Lunalert menu, paste it and click **Connect**. Lunalert checks it with GitHub
    before saving it.
 
 The token is stored only in your login Keychain, under the service
-`io.github.baramir.belfry`. It never touches the repository or a config file.
+`io.github.baramir.lunalert`. It never touches the repository or a config file.
 
-For development you can skip the Keychain by setting `BELFRY_GITHUB_TOKEN` in
+For development you can skip the Keychain by setting `LUNALERT_GITHUB_TOKEN` in
 the environment when you run the binary directly:
 
 ```bash
-BELFRY_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry
+LUNALERT_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Lunalert.app/Contents/MacOS/Lunalert
 ```
 
-To see what Belfry resolves for your current notifications without the UI:
+To see what Lunalert resolves for your current notifications without the UI:
 
 ```bash
-BELFRY_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --dump
+LUNALERT_GITHUB_TOKEN="$(gh auth token)" build/Build/Products/Release/Lunalert.app/Contents/MacOS/Lunalert --dump
 ```
 
 To render every screen and state to PNGs from fictional data (for design review), or every action animation
 frame by frame (30 fps, one folder per action, ready for `ffmpeg`):
 
 ```bash
-build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --snapshot /tmp/belfry-snapshots
-build/Build/Products/Release/Belfry.app/Contents/MacOS/Belfry --animations /tmp/belfry-frames
+build/Build/Products/Release/Lunalert.app/Contents/MacOS/Lunalert --snapshot /tmp/lunalert-snapshots
+build/Build/Products/Release/Lunalert.app/Contents/MacOS/Lunalert --animations /tmp/lunalert-frames
 ```
 
-See [docs/research.md](docs/research.md) for how Belfry compares with other clients and what's next.
+See [docs/research.md](docs/research.md) for how Lunalert compares with other clients and what's next.
 
 ## A note on your own activity
 
 GitHub doesn't notify you about your own actions. If scripts, bots or agents
-push and comment using your account, Belfry won't ring for that activity,
+push and comment using your account, Lunalert won't ring for that activity,
 because GitHub never creates the notification.
 
 ## Layout
 
 ```
 project.yml                 XcodeGen spec (the .xcodeproj is generated, not committed)
-Belfry/Sources/
-  BelfryApp.swift           MenuBarExtra + Settings scenes
+Lunalert/Sources/
+  LunalertApp.swift           MenuBarExtra + Settings scenes
   AppDelegate.swift         notification permission, banner click → open URL
   NotificationStore.swift   polling, inbox items, banners, Done/Mute with undo, keyboard selection
   Theme.swift               colour tokens, spacing scale, button and chip styles

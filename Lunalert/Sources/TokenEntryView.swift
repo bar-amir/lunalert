@@ -16,7 +16,7 @@ struct TokenEntryView: View {
         VStack(spacing: Spacing.section) {
             VStack(spacing: 6) {
                 MoonPhaseView(size: 44)
-                Text(kind == .welcome ? "Belfry" : "Reconnect Belfry")
+                Text(kind == .welcome ? "Lunalert" : "Reconnect Lunalert")
                     .font(.system(size: 24, weight: .heavy, design: .rounded))
                     .foregroundStyle(Theme.starlight)
                 Text(kind == .welcome
@@ -72,7 +72,7 @@ struct TokenEntryView: View {
             .padding(14)
             .card()
 
-            Label("The token stays in your Mac's Keychain. Belfry only talks to api.github.com.", systemImage: "lock.fill")
+            Label("The token stays in your Mac's Keychain. Lunalert only talks to api.github.com.", systemImage: "lock.fill")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.secondaryText)
         }

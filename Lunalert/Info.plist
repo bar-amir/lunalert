@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Belfry</string>
+	<string>Lunalert</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,8 +27,8 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
 	<key>NSLocationUsageDescription</key>
-	<string>Belfry uses your location only to draw the real night sky above you. It never leaves your Mac.</string>
+	<string>Lunalert uses your location only to draw the real night sky above you. It never leaves your Mac.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Belfry uses your location only to draw the real night sky above you. It never leaves your Mac.</string>
+	<string>Lunalert uses your location only to draw the real night sky above you. It never leaves your Mac.</string>
 </dict>
 </plist>

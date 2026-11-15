@@ -1,5 +1,5 @@
-// Renders Belfry's app icon into the asset catalog: a glowing bell tower in deep space.
-// Usage: swift scripts/make-icon.swift Belfry/Resources/Assets.xcassets/AppIcon.appiconset
+// Renders Lunalert's app icon into the asset catalog: a glowing bell tower in deep space.
+// Usage: swift scripts/make-icon.swift Lunalert/Resources/Assets.xcassets/AppIcon.appiconset
 import AppKit
 
 let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
@@ -49,7 +49,7 @@ func render(size: CGFloat) -> Data {
     glow.shadowBlurRadius = 40 * s
     glow.shadowOffset = .zero
 
-    // Tower: pointed roof, belfry arch, base.
+    // Tower: pointed roof, lunalert arch, base.
     NSGraphicsContext.saveGraphicsState()
     glow.set()
     hex(0x2A3550).setFill()

@@ -5,7 +5,6 @@ private let footerClearance: CGFloat = 70
 
 struct MenuContentView: View {
     @EnvironmentObject private var store: NotificationStore
-    @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var searchFocused: Bool
     @FocusState private var listFocused: Bool
@@ -13,15 +12,16 @@ struct MenuContentView: View {
     @Environment(\.colorScheme) private var systemScheme
     @AppStorage("panelAppearance") private var panelAppearance: PanelAppearance = .night
     @ObservedObject private var sky = SkyModel.shared
+    @State private var panelSize: CGSize = .zero
 
     private var inList: Bool { store.hasToken && store.problem != .badToken }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                header
+                header.zIndex(2)
                 if store.bannersAllowed == false && store.hasToken {
-                    FlashBar(symbol: "bell.slash.fill", color: Theme.attention, text: "Banners are off for Belfry in macOS.",
+                    FlashBar(symbol: "bell.slash.fill", color: Theme.attention, text: "Banners are off for Lunalert in macOS.",
                              action: ("Turn on…", store.openNotificationSettings))
                 }
                 if !store.hasToken {
@@ -53,7 +53,15 @@ struct MenuContentView: View {
         .overlay {
             if sky.stargazing { StargazeOverlay().transition(.opacity) }
         }
-        .background(SpaceBackground())
+        .background(ParallaxSky())
+        .clipped()
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { panelSize = $0 }
+        .onContinuousHover { phase in
+            switch phase {
+            case let .active(point): Parallax.shared.track(point, in: panelSize)
+            case .ended: Parallax.shared.track(nil, in: panelSize)
+            }
+        }
         .environment(\.colorScheme, panelAppearance == .night ? .dark : systemScheme)
         .focusable()
         .focusEffectDisabled()
@@ -88,7 +96,7 @@ struct MenuContentView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            BelfryMark(size: 28)
+            LunalertMark(size: 28)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text("Inbox")
@@ -107,8 +115,8 @@ struct MenuContentView: View {
                 Image(systemName: "moon.stars")
             }
             .buttonStyle(IconButtonStyle())
-            .help("Stargaze: hide everything and look at the sky")
-            .accessibilityLabel("Stargaze")
+            .tooltip("Stargaze (alerts off)")
+            .accessibilityLabel("Stargaze, alerts off")
             if store.hasToken {
                 Button { store.refreshNow() } label: {
                     Image(systemName: "arrow.clockwise")
@@ -118,7 +126,7 @@ struct MenuContentView: View {
                                    value: store.isRefreshing)
                 }
                 .buttonStyle(IconButtonStyle())
-                .help("Check GitHub now (⌘R)")
+                .tooltip("Check GitHub now · ⌘R")
                 .accessibilityLabel(store.isRefreshing ? "Checking GitHub" : "Check GitHub now")
             }
             moreMenu
@@ -143,7 +151,7 @@ struct MenuContentView: View {
                 NSWorkspace.shared.open(URL(string: "https://github.com/notifications")!)
             }
             Divider()
-            Button("Quit Belfry") { NSApp.terminate(nil) }.keyboardShortcut("q")
+            Button("Quit Lunalert") { NSApp.terminate(nil) }.keyboardShortcut("q")
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 12, weight: .bold))
@@ -156,7 +164,7 @@ struct MenuContentView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("More")
+        .tooltip("Settings and more")
         .accessibilityLabel("More")
     }
 
@@ -446,8 +454,8 @@ struct MenuContentView: View {
     }
 
     private func showSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        openSettings()
+        StatusItemController.shared.closePanel()
+        SettingsWindowController.shared.show()
     }
 }
 
@@ -747,7 +755,7 @@ struct RepoBox: View {
                     Image(systemName: "checkmark")
                 }
                 .buttonStyle(IconButtonStyle(size: 28, tint: hovering ? Theme.text : Theme.secondaryText))
-                .help("Mark everything in \(repo) done")
+                .tooltip("Mark all in \(repo) done", .left)
                 .accessibilityLabel("Mark everything in \(repo) done")
             }
             .padding(.horizontal, Spacing.cardInset)
@@ -925,7 +933,7 @@ struct ItemRow: View {
                         Image(systemName: "bell.slash")
                     }
                     .buttonStyle(IconButtonStyle(size: 28))
-                    .help("Mute this thread (M)")
+                    .tooltip("Mute thread · M", .left)
                     .accessibilityLabel("Mute")
                     .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .trailing)))
                 }
@@ -933,7 +941,7 @@ struct ItemRow: View {
                     Image(systemName: "checkmark")
                 }
                 .buttonStyle(IconButtonStyle(size: 28, tint: active ? Theme.open : Theme.secondaryText, quiet: !active))
-                .help("Mark done (E)")
+                .tooltip("Mark done · E", .left)
                 .accessibilityLabel("Mark done")
             }
         }
@@ -1149,7 +1157,7 @@ extension CIFilter {
 }
 
 /// The bell on a night tile; drawn rather than read from the app icon, which macOS caches.
-struct BelfryMark: View {
+struct LunalertMark: View {
     var size: CGFloat = 28
 
     var body: some View {

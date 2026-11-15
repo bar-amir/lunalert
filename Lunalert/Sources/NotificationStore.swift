@@ -35,7 +35,7 @@ final class NotificationStore: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var hasToken = false
     @Published private(set) var login: String?
-    /// nil until checked; false when macOS will not show Belfry's banners.
+    /// nil until checked; false when macOS will not show Lunalert's banners.
     @Published private(set) var bannersAllowed: Bool?
     /// Open PRs waiting on your review, newest activity first.
     @Published private(set) var reviewRequests: [ReviewRequest] = []
@@ -181,9 +181,9 @@ final class NotificationStore: ObservableObject {
 
     // MARK: Token
 
-    /// Keychain first; `BELFRY_GITHUB_TOKEN` in the environment is a development fallback.
+    /// Keychain first; `LUNALERT_GITHUB_TOKEN` in the environment is a development fallback.
     private func currentToken() -> String? {
-        Keychain.readToken() ?? ProcessInfo.processInfo.environment["BELFRY_GITHUB_TOKEN"]
+        Keychain.readToken() ?? ProcessInfo.processInfo.environment["LUNALERT_GITHUB_TOKEN"]
     }
 
     /// Checks the token with GitHub before storing it. Returns an error message, or nil on success.
@@ -209,7 +209,7 @@ final class NotificationStore: ObservableObject {
         refreshNow()
     }
 
-    static let newTokenURL = URL(string: "https://github.com/settings/tokens/new?scopes=notifications,repo&description=Belfry")!
+    static let newTokenURL = URL(string: "https://github.com/settings/tokens/new?scopes=notifications,repo&description=Lunalert")!
 
     // MARK: Polling
 
@@ -285,7 +285,7 @@ final class NotificationStore: ObservableObject {
     private func pollReviewRequests(client: GitHubClient) async -> Set<String> {
         let current: [ReviewRequest]
         do { current = try await client.reviewRequests() } catch {
-            NSLog("Belfry: review search failed: \(error.localizedDescription)")
+            NSLog("Lunalert: review search failed: \(error.localizedDescription)")
             return []
         }
         reviewRequests = current
@@ -306,6 +306,7 @@ final class NotificationStore: ObservableObject {
     }
 
     private func postReviewBanner(for pr: ReviewRequest) {
+        guard !SkyModel.shared.stargazing else { return } // Stargaze: alerts off; the list still updates
         let content = UNMutableNotificationContent()
         content.title = pr.title
         content.subtitle = "\(pr.repoFullName) #\(pr.number) · Review requested"
@@ -346,6 +347,7 @@ final class NotificationStore: ObservableObject {
     }
 
     private func postBanner(for thread: GitHubThread, detail: ThreadDetail) {
+        guard !SkyModel.shared.stargazing else { return } // Stargaze: alerts off; the list still updates
         let content = UNMutableNotificationContent()
         content.title = thread.displayTitle
         let number = detail.number.map { " #\($0)" } ?? ""
@@ -359,9 +361,10 @@ final class NotificationStore: ObservableObject {
     }
 
     private func postSummaryBanner(count: Int) {
+        guard !SkyModel.shared.stargazing else { return } // Stargaze: alerts off; the list still updates
         let content = UNMutableNotificationContent()
         content.title = "\(count) more GitHub notifications"
-        content.body = "Open the Belfry menu to see them all."
+        content.body = "Open the Lunalert menu to see them all."
         content.userInfo = [AppDelegate.urlKey: "https://github.com/notifications"]
         if soundEnabled { content.sound = .default }
         UNUserNotificationCenter.current().add(
@@ -379,7 +382,7 @@ final class NotificationStore: ObservableObject {
     }
 
     static let notificationSettingsURL =
-        URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.baramir.belfry")!
+        URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.github.baramir.lunalert")!
 
     func openNotificationSettings() {
         NSWorkspace.shared.open(Self.notificationSettingsURL)
@@ -388,7 +391,7 @@ final class NotificationStore: ObservableObject {
     func sendTestBanner() {
         requestBannerPermissionIfNeeded()
         let content = UNMutableNotificationContent()
-        content.title = "Belfry is ringing"
+        content.title = "Lunalert is ringing"
         content.subtitle = "Test notification"
         content.body = "Banners for new GitHub notifications will look like this."
         content.userInfo = [AppDelegate.urlKey: "https://github.com/notifications"]
@@ -536,7 +539,7 @@ final class NotificationStore: ObservableObject {
                     if action.kind == .mute { try await client.mute(threadId: id) }
                     try await client.markDone(threadId: id)
                 } catch {
-                    NSLog("Belfry: \(action.kind) failed for \(id): \(error.localizedDescription)")
+                    NSLog("Lunalert: \(action.kind) failed for \(id): \(error.localizedDescription)")
                 }
             }
         }
@@ -575,7 +578,7 @@ struct SeenStore: Codable {
 
     private static var fileURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Belfry", isDirectory: true)
+            .appendingPathComponent("Lunalert", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("seen-threads.json")
     }

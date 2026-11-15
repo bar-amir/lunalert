@@ -1,4 +1,4 @@
-name: Belfry
+name: Lunalert
 options:
   bundleIdPrefix: io.github.baramir
   deploymentTarget:
@@ -7,34 +7,34 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.6.0"
+    MARKETING_VERSION: "0.7.0"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     DEVELOPMENT_TEAM: ""
     ENABLE_HARDENED_RUNTIME: NO
 targets:
-  Belfry:
+  Lunalert:
     type: application
     platform: macOS
     sources:
-      - Belfry/Sources
-      - Belfry/Resources
+      - Lunalert/Sources
+      - Lunalert/Resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.baramir.belfry
-        PRODUCT_NAME: Belfry
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.baramir.lunalert
+        PRODUCT_NAME: Lunalert
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: Belfry/Info.plist
+        INFOPLIST_FILE: Lunalert/Info.plist
     info:
-      path: Belfry/Info.plist
+      path: Lunalert/Info.plist
       properties:
-        CFBundleDisplayName: Belfry
+        CFBundleDisplayName: Lunalert
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.developer-tools
         LSUIElement: true
         NSHumanReadableCopyright: "MIT License"
-        NSLocationUsageDescription: "Belfry uses your location only to draw the real night sky above you. It never leaves your Mac."
-        NSLocationWhenInUseUsageDescription: "Belfry uses your location only to draw the real night sky above you. It never leaves your Mac."
+        NSLocationUsageDescription: "Lunalert uses your location only to draw the real night sky above you. It never leaves your Mac."
+        NSLocationWhenInUseUsageDescription: "Lunalert uses your location only to draw the real night sky above you. It never leaves your Mac."
