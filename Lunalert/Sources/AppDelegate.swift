@@ -7,9 +7,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         LegacyMigration.run()
+        BannerSound.installSounds()
         if let i = CommandLine.arguments.firstIndex(of: "--viewport-test"), i + 1 < CommandLine.arguments.count {
             ViewportTest.run(to: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
             exit(0)
+        }
+        if CommandLine.arguments.contains("--test-banner") {
+            UNUserNotificationCenter.current().delegate = self
+            Task { @MainActor in
+                NotificationStore.shared.sendTestBanner()
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                exit(0)
+            }
+            return
         }
         if CommandLine.arguments.contains("--orientation-check") {
             OrientationCheck.run()

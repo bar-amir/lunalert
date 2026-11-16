@@ -35,13 +35,33 @@ struct BannerSound: RawRepresentable, Hashable, Identifiable {
         return Bundle.main.url(forResource: name, withExtension: "caf")
     }
 
-    /// What to attach to a banner. Bundled sounds sit directly in `Contents/Resources`, where
-    /// UserNotifications looks for an app's own sounds; system ones resolve by plain name.
+    /// The file name of an installed copy in `~/Library/Sounds`.
+    private var installedName: String { "Lunalert \(name).caf" }
+
+    /// What to attach to a banner. Lunalert's sounds play from the copies in `~/Library/Sounds`, which
+    /// the notification service always checks, rather than from inside the app (it looks inside the copy
+    /// of the app macOS has on record, which can be a stale one after the app is rebuilt or moved).
     var notificationSound: UNNotificationSound? {
         if self == .none { return nil }
         if isSystem { return UNNotificationSound(named: UNNotificationSoundName(name)) }
         guard bundledURL != nil else { return .default }
-        return UNNotificationSound(named: UNNotificationSoundName("\(name).caf"))
+        return UNNotificationSound(named: UNNotificationSoundName(installedName))
+    }
+
+    /// Copies Lunalert's sounds into `~/Library/Sounds` (once, and again whenever a bundled file changes).
+    static func installSounds() {
+        let fm = FileManager.default
+        guard let library = fm.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        let folder = library.appendingPathComponent("Sounds", isDirectory: true)
+        try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        for sound in lunalert {
+            guard let source = sound.bundledURL else { continue }
+            let target = folder.appendingPathComponent(sound.installedName)
+            let same = (try? Data(contentsOf: source)) == (try? Data(contentsOf: target))
+            guard !same else { continue }
+            try? fm.removeItem(at: target)
+            try? fm.copyItem(at: source, to: target)
+        }
     }
 
     private static var previewing: NSSound?
